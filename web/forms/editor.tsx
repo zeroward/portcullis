@@ -628,6 +628,15 @@ export function StructuredForm({
         throw new Error(`Type ${confirmation} to confirm.`);
       const response = await api(url, method, body);
       setResult(response);
+      if (
+        values.version !== undefined &&
+        (response?.version !== undefined ||
+          response?.current_version !== undefined)
+      )
+        setValues((v) => ({
+          ...v,
+          version: response.current_version ?? response.version,
+        }));
       setReview(undefined);
       setTyped("");
       if (url === "/api/admin/secrets") setValues((v) => ({ ...v, value: "" }));

@@ -202,6 +202,47 @@ test("guides, notices, maintenance and preferences use fillable fields", async (
     .getByRole("button", { name: "Create guide", exact: true })
     .click();
   await expect(guide.getByText("Saved.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Guides", exact: true }).click();
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Browser form guide · version/ })
+    .click();
+  const guideContainer = page
+    .locator("details")
+    .filter({
+      has: page
+        .locator("summary")
+        .filter({ hasText: /^Browser form guide · version/ }),
+    })
+    .first();
+  const edit = guideContainer
+    .locator("details")
+    .filter({
+      has: page
+        .locator("summary")
+        .filter({ hasText: /^Publish new guide version$/ }),
+    });
+  await edit.locator("summary").click();
+  for (const version of [2, 3]) {
+    await edit
+      .getByLabel("Body (Markdown)", { exact: true })
+      .fill(`Guide revision ${version}`);
+    await edit
+      .getByRole("button", { name: "Publish new guide version", exact: true })
+      .click();
+    await expect
+      .poll(
+        async () =>
+          (await (await page.request.get("/api/guides")).json()).find(
+            (g: any) => g.title === "Browser form guide",
+          ).current_version,
+      )
+      .toBe(version);
+  }
+  await page
+    .getByRole("button", { name: "Administration", exact: true })
+    .click();
+
   await page.getByRole("button", { name: "notices", exact: true }).click();
   const notice = await panel(page, "Publish announcement");
   await notice
