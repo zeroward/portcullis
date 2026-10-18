@@ -11,6 +11,8 @@ import {
   Modal,
   Navigation,
   allowNavigation,
+  playSfx,
+  useSfxMuted,
   type NavPage,
 } from "./ui.js";
 import { api, setCsrfToken } from "./api.js";
@@ -415,6 +417,19 @@ function App() {
       return false;
     }
   });
+  const [sfxMuted, toggleSfx] = useSfxMuted();
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement | null)?.closest(
+        "button, a.button, summary",
+      );
+      if (!target || (target as HTMLButtonElement).disabled) return;
+      if (target.classList.contains("primary")) playSfx("deploy");
+      else if (!target.closest("nav")) playSfx("select");
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, []);
   useEffect(() => {
     if (me.data) {
       csrf = me.data.csrf;
@@ -482,6 +497,11 @@ function App() {
         <div className="login-orbit" aria-hidden="true">
           <Emblem />
         </div>
+        <div className="login-telemetry" aria-hidden="true">
+          <span>XBOX LIVE // SYSTEM LINK</span>
+          <span>NAT: OPEN</span>
+          <span>16 PLAYERS MAX</span>
+        </div>
         <p className="eyebrow">PRIVATE COMMUNITY / PRESS START</p>
         <h1>
           Your community.
@@ -493,9 +513,15 @@ function App() {
           Sign in with Pocket ID →
         </a>
         <small>Use your community account and passkey.</small>
-        <button className="login-theme" onClick={() => setLight(!light)}>
-          <Icon name="theme" /> {light ? "Dark theme" : "Light theme"}
-        </button>
+        <div className="login-controls">
+          <button className="login-theme" onClick={() => setLight(!light)}>
+            <Icon name="theme" /> {light ? "Dark theme" : "Light theme"}
+          </button>
+          <button className="login-theme" onClick={toggleSfx}>
+            <Icon name={sfxMuted ? "mute" : "sound"} />{" "}
+            {sfxMuted ? "Unmute SFX" : "Mute SFX"}
+          </button>
+        </div>
         {me.error &&
           ![
             "unauthenticated",
@@ -554,6 +580,10 @@ function App() {
               <Icon name="theme" />
               {light ? "Dark theme" : "Light theme"}
             </button>
+            <button onClick={toggleSfx}>
+              <Icon name={sfxMuted ? "mute" : "sound"} />
+              {sfxMuted ? "Unmute SFX" : "Mute SFX"}
+            </button>
             <a href="/auth/login">Refresh sign-in</a>
             <AsyncButton
               onClick={async () => {
@@ -575,7 +605,15 @@ function App() {
               {pages.find((p) => p.id === page)?.title ?? "Page not found"}
             </strong>
           </span>
-          <span className="header-label">PRIVATE COMMUNITY</span>
+          <div className="header-telemetry">
+            <span className="telemetry-pill" aria-hidden="true">
+              NAT: OPEN
+            </span>
+            <span className="telemetry-pill" aria-hidden="true">
+              PARTY: {admin ? "HOST" : "READY"}
+            </span>
+            <span className="header-label">PRIVATE COMMUNITY</span>
+          </div>
         </header>
         <main>
           <ErrorBoundary key={page}>
@@ -603,7 +641,10 @@ function App() {
           </ErrorBoundary>
         </main>
         <footer>
-          Portcullis <span>Built for a community, connected by NetBird.</span>
+          Portcullis{" "}
+          <span>
+            SYSTEM LINK // Built for a community, connected by NetBird.
+          </span>
         </footer>
       </div>
     </div>

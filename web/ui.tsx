@@ -2,6 +2,102 @@ import React, { useEffect, useId, useRef, useState } from "react";
 
 export const DraftScope = React.createContext("");
 
+let audioCtx: AudioContext | null = null;
+let sfxMuted = false;
+const sfxListeners = new Set<() => void>();
+
+export function useSfxMuted(): [boolean, () => void] {
+  const [muted, setMuted] = useState(sfxMuted);
+  useEffect(() => {
+    const listener = () => setMuted(sfxMuted);
+    sfxListeners.add(listener);
+    return () => {
+      sfxListeners.delete(listener);
+    };
+  }, []);
+  const toggle = () => {
+    sfxMuted = !sfxMuted;
+    sfxListeners.forEach((fn) => fn());
+    if (!sfxMuted) playSfx("select");
+  };
+  return [muted, toggle];
+}
+
+export function playSfx(
+  kind: "tick" | "select" | "back" | "deploy" = "select",
+) {
+  if (
+    sfxMuted ||
+    typeof window === "undefined" ||
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  )
+    return;
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctx) return;
+    audioCtx ??= new Ctx();
+    if (audioCtx.state === "suspended") void audioCtx.resume();
+    const now = audioCtx.currentTime;
+    const master = audioCtx.createGain();
+    master.connect(audioCtx.destination);
+
+    if (kind === "tick") {
+      const osc = audioCtx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(960, now);
+      osc.frequency.exponentialRampToValueAtTime(1420, now + 0.022);
+      master.gain.setValueAtTime(0.025, now);
+      master.gain.exponentialRampToValueAtTime(0.0008, now + 0.024);
+      osc.connect(master);
+      osc.start(now);
+      osc.stop(now + 0.025);
+    } else if (kind === "back") {
+      const osc = audioCtx.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(460, now);
+      osc.frequency.exponentialRampToValueAtTime(210, now + 0.075);
+      master.gain.setValueAtTime(0.045, now);
+      master.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc.connect(master);
+      osc.start(now);
+      osc.stop(now + 0.082);
+    } else if (kind === "deploy") {
+      [523.25, 659.25, 1046.5].forEach((freq, idx) => {
+        const osc = audioCtx!.createOscillator();
+        const g = audioCtx!.createGain();
+        osc.type = "triangle";
+        const start = now + idx * 0.028;
+        osc.frequency.setValueAtTime(freq, start);
+        g.gain.setValueAtTime(0.035, start);
+        g.gain.exponentialRampToValueAtTime(0.0008, start + 0.11);
+        osc.connect(g);
+        g.connect(master);
+        osc.start(start);
+        osc.stop(start + 0.115);
+      });
+    } else {
+      [587.33, 880].forEach((freq, idx) => {
+        const osc = audioCtx!.createOscillator();
+        const g = audioCtx!.createGain();
+        osc.type = idx === 0 ? "triangle" : "sine";
+        osc.frequency.setValueAtTime(freq, now);
+        osc.frequency.exponentialRampToValueAtTime(freq * 1.12, now + 0.065);
+        g.gain.setValueAtTime(idx === 0 ? 0.04 : 0.025, now);
+        g.gain.exponentialRampToValueAtTime(0.0008, now + 0.07);
+        osc.connect(g);
+        g.connect(master);
+        osc.start(now);
+        osc.stop(now + 0.072);
+      });
+    }
+  } catch {
+    /* Audio synthesis is optional and ignored when blocked by the browser. */
+  }
+}
+
 const paths: Record<string, string> = {
   services: "M3 5h18v14H3z M7 9h4m-2-2v4m6-2h2m-2 4h2",
   access: "M12 3l8 4v5c0 5-8 9-8 9s-8-4-8-9V7z M8 12l3 3 5-6",
@@ -16,6 +112,9 @@ const paths: Record<string, string> = {
   close: "m5 5 14 14M19 5 5 19",
   theme: "M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10z",
   star: "m12 3 3 6 7 1-5 5 1 7-6-4-6 4 1-7-5-5 7-1z",
+  sound:
+    "M11 5 6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13",
+  mute: "M11 5 6 9H2v6h4l5 4V5zM22 9l-6 6M16 9l6 6",
 };
 export function Icon({ name }: { name: string }) {
   return (
@@ -24,7 +123,7 @@ export function Icon({ name }: { name: string }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.6"
+      strokeWidth="1.75"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -37,14 +136,20 @@ export function Emblem() {
   return (
     <svg className="emblem" viewBox="0 0 64 72" fill="none" aria-hidden="true">
       <path
-        d="M32 3 58 14v34L32 69 6 48V14z"
+        d="M32 2 60 13v35L32 70 4 48V13z"
         stroke="currentColor"
-        strokeWidth="3"
+        strokeWidth="2.5"
+      />
+      <path
+        d="M32 7 54 16v30L32 64 10 46V16z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeOpacity="0.45"
       />
       <path
         d="M18 23h28M18 34h28M22 17v33m10-33v40m10-40v33"
         stroke="currentColor"
-        strokeWidth="5"
+        strokeWidth="4.5"
       />
       <path d="m18 50 4 5 4-5m2 7 4 5 4-5m2-7 4 5 4-5" fill="currentColor" />
     </svg>
@@ -106,12 +211,16 @@ export function Modal({
   useEffect(() => {
     const trigger = document.activeElement as HTMLElement | null;
     ref.current?.showModal();
+    playSfx("select");
     return () => {
       trigger?.focus();
     };
   }, []);
   const dismiss = () => {
-    if (allowNavigation(ref.current!)) close();
+    if (allowNavigation(ref.current!)) {
+      playSfx("back");
+      close();
+    }
   };
   return (
     <dialog
@@ -125,7 +234,7 @@ export function Modal({
     >
       <div className="dialog-head">
         <div>
-          <p className="eyebrow">PORTCULLIS / CONTROL PANEL</p>
+          <p className="eyebrow">PORTCULLIS // SYSTEM LINK TERMINAL</p>
           <h2 id={id}>{title}</h2>
         </div>
         <button type="button" onClick={dismiss} aria-label="Close dialog">
@@ -154,8 +263,10 @@ export function Navigation({
   const drawer = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (open) drawer.current?.showModal();
-    else if (drawer.current?.open) {
+    if (open) {
+      drawer.current?.showModal();
+      playSfx("select");
+    } else if (drawer.current?.open) {
       drawer.current.close();
       trigger.current?.focus();
     }
@@ -176,6 +287,7 @@ export function Navigation({
         onClick={(e) => {
           e.preventDefault();
           if (!allowNavigation()) return;
+          playSfx("select");
           navigate("services");
           setOpen(false);
         }}
@@ -183,6 +295,10 @@ export function Navigation({
         <Brand />
       </a>
       <p className="eyebrow">YOUR COMMUNITY. CONNECTED.</p>
+      <div className="lobby-beacon" aria-hidden="true">
+        <span className="beacon-dot" />
+        <span>SYSTEM LINK // LIVE</span>
+      </div>
       <nav aria-label="Main navigation">
         {[...new Set(pages.map((p) => p.group))].map((group) => (
           <div className="nav-group" key={group}>
@@ -194,8 +310,10 @@ export function Navigation({
                   key={p.id}
                   className={page === p.id ? "selected" : ""}
                   aria-current={page === p.id ? "page" : undefined}
+                  onMouseEnter={() => playSfx("tick")}
                   onClick={() => {
                     if (!allowNavigation()) return;
+                    playSfx("select");
                     navigate(p.id);
                     setOpen(false);
                   }}
@@ -220,6 +338,7 @@ export function Navigation({
           onClick={(e) => {
             e.preventDefault();
             if (!allowNavigation()) return;
+            playSfx("select");
             navigate("services");
           }}
         >
@@ -243,12 +362,16 @@ export function Navigation({
         onKeyDown={trapDialogFocus}
         onCancel={(e) => {
           e.preventDefault();
+          playSfx("back");
           setOpen(false);
         }}
       >
         <button
           className="drawer-close"
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            playSfx("back");
+            setOpen(false);
+          }}
           aria-label="Close navigation"
         >
           <Icon name="close" />
