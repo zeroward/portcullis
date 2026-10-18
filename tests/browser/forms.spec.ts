@@ -23,6 +23,15 @@ async function panel(page: Page, title: string) {
     .last();
 }
 async function choose(form: Locator, label: string, text: string) {
+  const picker = form.getByRole("group", { name: label, exact: true });
+  if (await picker.count()) {
+    const checkbox = picker
+      .getByRole("checkbox", { name: new RegExp(text) })
+      .first();
+    await expect(checkbox).toBeEnabled();
+    await checkbox.check();
+    return;
+  }
   const select = form.getByLabel(label, { exact: true });
   await expect(select).toBeEnabled();
   const option = select.locator("option").filter({ hasText: text }).first();
@@ -384,8 +393,8 @@ test("unavailable references survive edits and concurrency conflicts require an 
     .click();
   const form = await panel(page, "Edit entitlement Realm player");
   await expect(
-    form.getByLabel("Prerequisite entitlements").locator("option"),
-  ).toContainText(["Unavailable current selection"]);
+    form.getByRole("group", { name: "Prerequisite entitlements", exact: true }),
+  ).toContainText("Unavailable current selection");
   await form.getByLabel("Name", { exact: true }).fill("Realm player draft");
   const latest = (
     await (await page.request.get("/api/admin/access-configuration")).json()

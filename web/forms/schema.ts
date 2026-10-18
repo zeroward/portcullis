@@ -29,6 +29,9 @@ export interface FieldSpec {
   item?: FieldSpec;
   show?: (root: Values) => boolean;
   help?: string;
+  /** Presentation only; never included in submitted payloads. */
+  group?: string;
+  advanced?: boolean;
 }
 const f = (
   key: string,

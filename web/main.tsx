@@ -3,6 +3,16 @@ import { createRoot } from "react-dom/client";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./style.css";
+import {
+  DraftScope,
+  Brand,
+  Emblem,
+  Icon,
+  Modal,
+  Navigation,
+  allowNavigation,
+  type NavPage,
+} from "./ui.js";
 import { api, setCsrfToken } from "./api.js";
 import {
   ActionForm,
@@ -10,9 +20,11 @@ import {
   ReadableResult,
   LookupField,
   LookupStatusContext,
+  DraftValuesContext,
 } from "./forms/editor.js";
 type Row = Record<string, any>;
 let csrf = "";
+const simpleDrafts = new Map<string, Record<string, string>>();
 function useData<T = any>(url: string) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
@@ -99,31 +111,6 @@ function Mark({ children }: { children: string }) {
     </div>
   );
 }
-function Modal({
-  title,
-  close,
-  children,
-}: {
-  title: string;
-  close: () => void;
-  children: React.ReactNode;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    ref.current?.showModal();
-  }, []);
-  return (
-    <dialog ref={ref} onCancel={close} aria-labelledby="dialog-title">
-      <div className="dialog-head">
-        <h2 id="dialog-title">{title}</h2>
-        <button onClick={close} aria-label="Close dialog">
-          ×
-        </button>
-      </div>
-      {children}
-    </dialog>
-  );
-}
 function date(value: string | null, timezone: string) {
   return value
     ? new Intl.DateTimeFormat("en-US", {
@@ -145,9 +132,59 @@ function Form({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState("");
+  const scope = React.useContext(DraftScope);
+  const key = `${location.pathname}:${scope}:${label}`;
+  const initialDraft = useRef(simpleDrafts.get(key) ?? {});
+  const formRef = useRef<HTMLFormElement>(null);
+  const [dirty, setDirty] = useState(simpleDrafts.has(key));
+  useEffect(() => {
+    for (const [name, value] of Object.entries(initialDraft.current)) {
+      const element = formRef.current?.elements.namedItem(name);
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement
+      ) {
+        if (element instanceof HTMLInputElement && element.type === "checkbox")
+          element.checked = value === "on";
+        else if (element.type !== "file" && element.type !== "hidden")
+          element.value = value;
+      }
+    }
+  }, []);
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirty) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
   const [lookups, setLookups] = useState<Record<string, boolean>>({});
   return (
     <form
+      ref={formRef}
+      data-dirty={dirty}
+      onChange={(e) => {
+        setDirty(true);
+        const element = e.currentTarget;
+        queueMicrotask(() => {
+          const entries = Object.fromEntries(
+            Array.from(new FormData(element)).filter(
+              (entry): entry is [string, string] =>
+                typeof entry[1] === "string",
+            ),
+          );
+          element
+            .querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+            .forEach((input) => {
+              entries[input.name] = input.checked ? "on" : "off";
+            });
+          simpleDrafts.set(key, entries);
+        });
+      }}
       onSubmit={async (e) => {
         e.preventDefault();
         if (Object.values(lookups).some(Boolean)) return;
@@ -157,7 +194,9 @@ function Form({
         setSuccess("");
         try {
           await onSubmit(data);
+          simpleDrafts.delete(key);
           setSuccess("Saved.");
+          setDirty(false);
         } catch (e) {
           setError((e as Error).message);
         } finally {
@@ -168,7 +207,9 @@ function Form({
       <LookupStatusContext.Provider
         value={(id, ready) => setLookups((prev) => ({ ...prev, [id]: !ready }))}
       >
-        {children}
+        <DraftValuesContext.Provider value={initialDraft.current}>
+          {children}
+        </DraftValuesContext.Provider>
       </LookupStatusContext.Provider>
       <State error={error} />
       {success && <p role="status">{success}</p>}
@@ -210,33 +251,113 @@ function Field({
     </label>
   );
 }
-function DataTable({ rows, columns }: { rows: Row[]; columns: string[] }) {
+function DataTable({
+  rows,
+  columns,
+  labels = {},
+}: {
+  rows: Row[];
+  columns: string[];
+  labels?: Record<string, string>;
+}) {
+  const [filter, setFilter] = useState("");
+  const named =
+    columns.includes("id") &&
+    columns.some((c) =>
+      ["name", "displayName", "subject", "title"].includes(c),
+    );
+  const visibleColumns = named ? columns.filter((c) => c !== "id") : columns;
+  const displayRows = rows.filter(
+    (r) =>
+      !filter ||
+      JSON.stringify(r).toLowerCase().includes(filter.toLowerCase()) ||
+      Object.values(r).some((v) =>
+        labels[String(v)]?.toLowerCase().includes(filter.toLowerCase()),
+      ),
+  );
   return rows.length ? (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            {columns.map((c) => (
-              <th key={c}>{c.replaceAll("_", " ")}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={r.id ?? i}>
-              {columns.map((c) => (
-                <td key={c}>
-                  {typeof r[c] === "object" ? (
-                    <ReadableResult value={r[c]} />
-                  ) : (
-                    String(r[c] ?? "Unknown")
-                  )}
-                </td>
+    <div className="data-table">
+      {rows.length > 5 && (
+        <label className="table-filter">
+          Filter records
+          <input
+            type="search"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search this table…"
+          />
+        </label>
+      )}
+      <div
+        className="table-wrap"
+        role="region"
+        aria-label={`${columns
+          .filter((c) => c !== "id")
+          .slice(0, 2)
+          .join(" and ")
+          .replaceAll("_", " ")} records`}
+        tabIndex={0}
+      >
+        <table>
+          <thead>
+            <tr>
+              {visibleColumns.map((c) => (
+                <th scope="col" key={c}>
+                  {c.replaceAll("_", " ")}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {displayRows.map((r, i) => (
+              <tr key={r.id ?? i}>
+                {visibleColumns.map((c, index) => (
+                  <td key={c}>
+                    {labels[String(r[c])] ? (
+                      <>
+                        <span>{labels[String(r[c])]}</span>
+                        <small className="code">{r[c]}</small>
+                      </>
+                    ) : [
+                        "status",
+                        "state",
+                        "fulfillment",
+                        "access",
+                        "availability",
+                      ].includes(c) && typeof r[c] === "string" ? (
+                      <Pill value={r[c]} />
+                    ) : typeof r[c] === "object" ||
+                      typeof r[c] === "boolean" ? (
+                      typeof r[c] === "object" && r[c] !== null ? (
+                        <details className="cell-details">
+                          <summary>View details</summary>
+                          <ReadableResult value={r[c]} />
+                        </details>
+                      ) : (
+                        <ReadableResult value={r[c]} />
+                      )
+                    ) : (
+                      <span
+                        className={
+                          c === "id" || c.endsWith("_id")
+                            ? "code muted"
+                            : undefined
+                        }
+                      >
+                        {String(r[c] ?? "Unknown")}
+                      </span>
+                    )}
+                    {named && index === 0 && (
+                      <small className="code">{r.id}</small>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!displayRows.length && <Empty>No records match your search.</Empty>}
+      </div>
     </div>
   ) : (
     <Empty>No records to show.</Empty>
@@ -287,7 +408,13 @@ function App() {
   const [page, setPage] = useState(
     location.pathname === "/" ? "services" : location.pathname.slice(1),
   );
-  const [light, setLight] = useState(false);
+  const [light, setLight] = useState(() => {
+    try {
+      return localStorage.getItem("portcullis-theme") === "light";
+    } catch {
+      return false;
+    }
+  });
   useEffect(() => {
     if (me.data) {
       csrf = me.data.csrf;
@@ -296,30 +423,66 @@ function App() {
   }, [me.data]);
   useEffect(() => {
     document.documentElement.dataset.theme = light ? "light" : "dark";
+    try {
+      localStorage.setItem("portcullis-theme", light ? "light" : "dark");
+    } catch {
+      /* Storage may be unavailable. */
+    }
   }, [light]);
+  const historyIndex = useRef<number>(history.state?.portcullisIndex ?? 0);
+  const restoringHistory = useRef(false);
   const nav = (next: string) => {
     setPage(next);
-    history.pushState({}, "", next === "services" ? "/" : `/${next}`);
+    historyIndex.current += 1;
+    history.pushState(
+      { portcullisIndex: historyIndex.current },
+      "",
+      next === "services" ? "/" : `/${next}`,
+    );
   };
   useEffect(() => {
-    const pop = () =>
+    history.replaceState(
+      { ...history.state, portcullisIndex: historyIndex.current },
+      "",
+    );
+    const pop = (event: PopStateEvent) => {
+      if (restoringHistory.current) {
+        restoringHistory.current = false;
+        return;
+      }
+      const next = event.state?.portcullisIndex ?? 0;
+      if (!allowNavigation() && next !== historyIndex.current) {
+        restoringHistory.current = true;
+        history.go(historyIndex.current - next);
+        return;
+      }
+      historyIndex.current = next;
       setPage(
         location.pathname === "/" ? "services" : location.pathname.slice(1),
       );
+    };
     window.addEventListener("popstate", pop);
     return () => window.removeEventListener("popstate", pop);
   }, []);
   if (me.loading)
     return (
       <main className="login">
-        <div className="brand">▥ PORTCULLIS</div>
+        <div className="brand">
+          <Brand />
+        </div>
         <State loading />
       </main>
     );
   if (!me.data)
     return (
       <main className="login">
-        <div className="brand">▥ PORTCULLIS</div>
+        <div className="brand">
+          <Brand />
+        </div>
+        <div className="login-orbit" aria-hidden="true">
+          <Emblem />
+        </div>
+        <p className="eyebrow">PRIVATE COMMUNITY / PRESS START</p>
         <h1>
           Your community.
           <br />
@@ -330,6 +493,9 @@ function App() {
           Sign in with Pocket ID →
         </a>
         <small>Use your community account and passkey.</small>
+        <button className="login-theme" onClick={() => setLight(!light)}>
+          <Icon name="theme" /> {light ? "Dark theme" : "Light theme"}
+        </button>
         {me.error &&
           ![
             "unauthenticated",
@@ -355,65 +521,61 @@ function App() {
           user.roles.map((r: Row) => roleLabels[r.role]).filter(Boolean),
         ),
       ].join(" · ") || "Community member";
-  const pages = [
-    ["services", "◫", "Services"],
-    ["access", "◇", "My access"],
-    ["devices", "▱", "My devices"],
-    ["tickets", "☷", "Support"],
-    ["guides", "▤", "Guides"],
-    ["onboarding", "◎", "Get started"],
-    ["notices", "◉", "Community"],
-    ["notifications", "♧", "Updates"],
-    ...(admin ? [["admin", "⚙", "Administration"]] : []),
+  const pages: NavPage[] = [
+    { id: "services", title: "Services", group: "Play" },
+    { id: "access", title: "My access", group: "Play" },
+    { id: "devices", title: "My devices", group: "Play" },
+    { id: "tickets", title: "Support", group: "Community" },
+    { id: "guides", title: "Guides", group: "Community" },
+    { id: "onboarding", title: "Get started", group: "Community" },
+    { id: "notices", title: "Community", group: "Community" },
+    { id: "notifications", title: "Updates", group: "Community" },
+    ...(admin
+      ? [{ id: "admin", title: "Administration", group: "Administration" }]
+      : []),
   ];
   return (
     <div className="shell">
-      <aside>
-        <a
-          href="/"
-          className="brand"
-          onClick={(e) => {
-            e.preventDefault();
-            nav("services");
-          }}
-        >
-          ▥ PORTCULLIS
-        </a>
-        <p className="eyebrow">THE COMMUNITY GATEWAY</p>
-        <nav aria-label="Main navigation">
-          {pages.map(([id, icon, title]) => (
-            <button
-              key={id}
-              className={page === id ? "selected" : ""}
-              onClick={() => nav(id)}
-              aria-current={page === id ? "page" : undefined}
-            >
-              <span aria-hidden>{icon}</span>
-              {title}
+      <Navigation
+        pages={pages}
+        page={page}
+        navigate={nav}
+        account={
+          <>
+            <div className="account-name">
+              <span className="avatar">{user.name.slice(0, 1)}</span>
+              <div>
+                <strong>{user.name}</strong>
+                <small>{roleLabel}</small>
+              </div>
+            </div>
+            {user.development && <small>Development environment</small>}
+            <button onClick={() => setLight(!light)}>
+              <Icon name="theme" />
+              {light ? "Dark theme" : "Light theme"}
             </button>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <button onClick={() => setLight(!light)}>
-            {light ? "◐ Dark theme" : "◑ Light theme"}
-          </button>
-          <strong>{user.name}</strong>
-          <small>{roleLabel}</small>
-          {user.development && <small>Development environment</small>}
-          <AsyncButton
-            onClick={async () => {
-              await api("/auth/logout", "POST", {});
-              location.assign("/");
-            }}
-          >
-            Sign out
-          </AsyncButton>
-        </div>
-      </aside>
+            <a href="/auth/login">Refresh sign-in</a>
+            <AsyncButton
+              onClick={async () => {
+                if (!allowNavigation()) return;
+                await api("/auth/logout", "POST", {});
+                location.assign("/");
+              }}
+            >
+              Sign out
+            </AsyncButton>
+          </>
+        }
+      />
       <div className="workspace">
         <header>
-          <span>PRIVATE COMMUNITY / PORTAL</span>
-          <a href="/auth/login">Refresh sign-in</a>
+          <span>
+            PORTAL /{" "}
+            <strong>
+              {pages.find((p) => p.id === page)?.title ?? "Page not found"}
+            </strong>
+          </span>
+          <span className="header-label">PRIVATE COMMUNITY</span>
         </header>
         <main>
           <ErrorBoundary key={page}>
@@ -489,12 +651,17 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">A PLACE TO PLAY & CONNECT</p>
+          <p className="eyebrow">COMMUNITY LOBBY / SERVICE LIBRARY</p>
           <h1>Find your next adventure.</h1>
-          <p>Everything the community has to offer, in one place.</p>
+          <p>
+            Your games. Your servers. Your people. Pick a service and get
+            connected.
+          </p>
         </div>
         {canManage && (
-          <button onClick={() => setEdit(null)}>+ Add service</button>
+          <button className="primary" onClick={() => setEdit(null)}>
+            + Add service
+          </button>
         )}
       </div>
       <div className="toolbar">
@@ -507,6 +674,7 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
             <button
               key={id}
               className={mode === id ? "selected" : ""}
+              aria-pressed={mode === id}
               onClick={() => setMode(id)}
             >
               {name}
@@ -524,6 +692,7 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
         <label>
           <span className="sr-only">Category</span>
           <select
+            aria-label="Category"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
           >
@@ -536,20 +705,23 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
       </div>
       <State {...query} retry={query.refresh} />
       <div className="gallery">
-        {rows.map((s, i) => (
+        {rows.map((s) => (
           <article className="card" key={s.id}>
             <div
-              className={`art art-${i % 4}`}
+              className={`art art-${s.type === "game" ? 0 : 1}${s.cover ? " has-cover" : ""}`}
               style={
                 s.cover ? { backgroundImage: `url("${s.cover}")` } : undefined
               }
             >
-              <span className="art-symbol" aria-hidden>
-                {s.type === "game" ? "♜" : "◈"}
-              </span>
+              {!s.cover && (
+                <div className="art-symbol">
+                  <Emblem />
+                </div>
+              )}
               <span className="card-type">{s.category}</span>
               <AsyncButton
-                className="favorite"
+                className={`favorite ${s.favorite ? "is-favorite" : ""}`}
+                aria-pressed={s.favorite}
                 aria-label={`${s.favorite ? "Remove" : "Add"} ${s.name} favorite`}
                 onClick={async () => {
                   await api(`/api/services/${s.id}/favorite`, "PUT", {
@@ -558,16 +730,21 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
                   void query.refresh();
                 }}
               >
-                {s.favorite ? "★" : "☆"}
+                <Icon name="star" />
               </AsyncButton>
             </div>
             <div className="card-body">
               <div className="card-status">
-                <Pill
-                  value={
-                    s.health.maintenance.length ? "maintenance" : s.health.state
-                  }
-                />
+                <span className="status-pair">
+                  <span>Health</span>
+                  <Pill
+                    value={
+                      s.health.maintenance.length
+                        ? "maintenance"
+                        : s.health.state
+                    }
+                  />
+                </span>
                 <span className="muted">
                   {s.type === "game" ? "GAME" : "SERVICE"}
                 </span>
@@ -589,7 +766,10 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
                 ))}
               </div>
               <div className="card-bottom">
-                <Pill value={s.access} />
+                <span className="status-pair">
+                  <span>Access</span>
+                  <Pill value={s.access} />
+                </span>
                 <button onClick={() => setDetail(s)}>Explore →</button>
               </div>
             </div>
@@ -609,7 +789,16 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
       {detail && (
         <Modal title={detail.name} close={() => setDetail(undefined)}>
           <p>{detail.summary}</p>
-          <Pill value={detail.health.state} />
+          <div className="detail-status">
+            <span className="status-pair">
+              <span>Health</span>
+              <Pill value={detail.health.state} />
+            </span>
+            <span className="status-pair">
+              <span>Access</span>
+              <Pill value={detail.access} />
+            </span>
+          </div>
           {detail.health.maintenance.map((m: Row) => (
             <p className="banner" key={m.title}>
               Maintenance: {m.title}
@@ -635,8 +824,10 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
           ))}
           {detail.metadata ? (
             <>
-              <Mark>{detail.metadata.description}</Mark>
               <h3>Connection details</h3>
+              {!detail.metadata.endpoints.length && (
+                <p>No connection endpoints published.</p>
+              )}
               {detail.metadata.endpoints.map((e: Row) => (
                 <div className="connection" key={e.label}>
                   <strong>{e.label}</strong>
@@ -663,10 +854,6 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
                   )}
                 </div>
               ))}
-              <Mark>{detail.metadata.instructions}</Mark>
-              {detail.metadata.requiredClient && (
-                <p>Required client: {detail.metadata.requiredClient}</p>
-              )}
               {detail.metadata.links.map((l: Row) => (
                 <a
                   key={l.url}
@@ -678,6 +865,14 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
                   {l.label} ↗
                 </a>
               ))}
+              <h3>Setup instructions</h3>
+              <Mark>
+                {detail.metadata.instructions ||
+                  "No additional instructions provided."}
+              </Mark>
+              {detail.metadata.requiredClient && (
+                <p>Required client: {detail.metadata.requiredClient}</p>
+              )}
               {detail.metadata.provider === "wow-manager" && (
                 <p className="banner">
                   Game-account provisioning and server controls: Awaiting API
@@ -692,6 +887,9 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
             </p>
           )}
           <h3>Access requirements</h3>
+          {!detail.requirements.length && (
+            <p>No additional access requirements.</p>
+          )}
           {detail.requirements.map((e: Row) => (
             <div className="row" key={e.id}>
               <span>{e.name}</span>
@@ -707,6 +905,30 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
               )}
             </div>
           ))}
+          {detail.metadata && (
+            <details className="panel">
+              <summary>Service information</summary>
+              <Mark>{detail.metadata.description}</Mark>
+              <ReadableResult
+                value={{
+                  owner: detail.metadata.owner,
+                  version: detail.metadata.version,
+                  environment: detail.metadata.environment,
+                  provider: detail.metadata.provider,
+                }}
+              />
+              <Mark>{detail.metadata.rules}</Mark>
+              {detail.metadata.screenshots?.map((src: string) => (
+                <img
+                  className="service-screenshot"
+                  key={src}
+                  src={src}
+                  alt={`${detail.name} screenshot`}
+                  loading="lazy"
+                />
+              ))}
+            </details>
+          )}
           <button
             onClick={() => {
               sessionStorage.setItem("ticket-service", detail.id);
@@ -1047,7 +1269,11 @@ function TicketPage({ user }: { user: Row }) {
         </Modal>
       )}
       {selected && (
-        <Modal title="Ticket timeline" close={() => setSelected(undefined)}>
+        <Modal
+          title="Ticket timeline"
+          draftScope={selected}
+          close={() => setSelected(undefined)}
+        >
           <TicketDetail id={selected} user={user} />
         </Modal>
       )}
@@ -1512,17 +1738,39 @@ function AdminPage({ user }: { user: Row }) {
     <>
       <p className="eyebrow">COMMUNITY OPERATIONS</p>
       <h1>Administration</h1>
-      <div className="tabs wrap">
-        {tabs.map((t) => (
-          <button
-            key={t}
-            className={tab === t ? "selected" : ""}
-            onClick={() => setTab(t)}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <nav className="admin-nav" aria-label="Administration sections">
+        {Object.entries({
+          Overview: ["overview"],
+          People: ["users", "approvals"],
+          "Services & access": ["services", "access"],
+          Network: ["network"],
+          Operations: ["monitoring", "tickets", "notices", "audit"],
+          Settings: ["settings"],
+        }).map(
+          ([group, items]) =>
+            items.some((t) => tabs.includes(t)) && (
+              <div key={group}>
+                <p className="nav-label">{group}</p>
+                <div className="tabs wrap">
+                  {items
+                    .filter((t) => tabs.includes(t))
+                    .map((t) => (
+                      <button
+                        key={t}
+                        className={tab === t ? "selected" : ""}
+                        aria-current={tab === t ? "page" : undefined}
+                        onClick={() => {
+                          if (allowNavigation()) setTab(t);
+                        }}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            ),
+        )}
+      </nav>
       <AdminSection key={tab} tab={tab} user={user} />
     </>
   );
@@ -1546,27 +1794,77 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
     )[tab] ?? "/api/providers";
   const q = useData<any>(url);
   const [result, setResult] = useState<any>();
+  const [resourceNames, setResourceNames] = useState<Record<string, string>>(
+    {},
+  );
+  useEffect(() => {
+    let active = true;
+    if (tab === "monitoring")
+      void api("/api/form-options/services?purpose=monitor.manage")
+        .then((rows) => {
+          if (active)
+            setResourceNames(
+              Object.fromEntries(rows.map((r: Row) => [r.id, r.label])),
+            );
+        })
+        .catch(() => {
+          /* Keep identifiers visible when a lookup is unavailable. */
+        });
+    return () => {
+      active = false;
+    };
+  }, [tab]);
   const done = q.refresh;
   return (
     <>
       <State {...q} retry={done} />
       {tab === "overview" && q.data && (
         <>
+          <div className="overview-stats">
+            {[
+              ["Failures", "failures"],
+              ["Pending requests", "requests"],
+              ["Incidents", "incidents"],
+              ["Catalog services", "health"],
+            ].map(([label, key]) => (
+              <a className="stat" key={key} href={`#overview-${key}`}>
+                <span>{label}</span>
+                <strong>{q.data[key]?.length ?? 0}</strong>
+              </a>
+            ))}
+          </div>
           {[
-            "health",
-            "incidents",
-            "tickets",
-            "requests",
             "failures",
+            "jobs",
+            "requests",
+            "incidents",
+            "health",
+            "tickets",
             "expiring",
             "workers",
-            "jobs",
             "devices",
             "reconciliation",
             "audit",
           ].map((key) => (
-            <section key={key}>
-              <h2>{key}</h2>
+            <details
+              id={`overview-${key}`}
+              className="overview-section"
+              key={key}
+              open={
+                [
+                  "failures",
+                  "jobs",
+                  "requests",
+                  "incidents",
+                  "health",
+                  "tickets",
+                ].includes(key) &&
+                (q.data[key].length > 0 || key === "health")
+              }
+            >
+              <summary>
+                <h2>{key === "jobs" ? "Failed jobs" : key}</h2>
+              </summary>
               <DataTable
                 rows={q.data[key]}
                 columns={
@@ -1588,10 +1886,34 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
                             ? ["id", "seen_at"]
                             : key === "reconciliation"
                               ? ["id", "provider", "status", "details"]
-                              : ["id", "name", "status", "fulfillment"]
+                              : key === "jobs"
+                                ? ["id", "kind", "status", "attempts", "error"]
+                                : key === "devices"
+                                  ? [
+                                      "id",
+                                      "user_id",
+                                      "external_id",
+                                      "metadata",
+                                      "observed_at",
+                                    ]
+                                  : key === "expiring"
+                                    ? [
+                                        "id",
+                                        "name",
+                                        "fulfillment",
+                                        "expires_at",
+                                      ]
+                                    : key === "failures"
+                                      ? [
+                                          "id",
+                                          "name",
+                                          "fulfillment",
+                                          "snapshot",
+                                        ]
+                                      : ["id", "name", "status", "created_at"]
                 }
               />
-            </section>
+            </details>
           ))}
           <ReadableResult value={q.data.providers} />
           <Form
@@ -2042,6 +2364,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
           <DataTable
             rows={q.data ?? []}
             columns={["id", "service_id", "kind", "enabled", "next_run"]}
+            labels={resourceNames}
           />
           <ActionForm
             title="Create health check"

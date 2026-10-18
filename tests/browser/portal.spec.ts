@@ -197,9 +197,11 @@ test("mobile card gallery fits viewport and has named navigation controls", asyn
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
+  await page.getByRole("button", { name: "Open navigation" }).click();
   await expect(
     page.getByRole("navigation", { name: "Main navigation" }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -251,6 +253,11 @@ test("service editing preserves dependency mappings", async ({ page }) => {
     .getByRole("button", { name: "Browser dependency edit", exact: true })
     .click();
   await page.getByRole("button", { name: "Edit service", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .locator("summary")
+    .filter({ hasText: /^Access & dependencies/ })
+    .click();
   await expect(
     page
       .getByRole("group", { name: "Dependencies", exact: true })

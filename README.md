@@ -59,9 +59,28 @@ No production credentials or resource writes are needed. Ports 4100, 4200, 4300,
 `npm run build` is required before browser tests after frontend changes.
 `npm run format` applies the source formatter; `npm run check` checks formatting too.
 
-Latest local verification: 67 backend/payload tests and 14 Chromium workflows passed, plus
+Latest local verification: 67 backend/payload tests and 24 Chromium workflows passed, plus
 formatting, typecheck, lint and production build. See the persistent
 [checklist](docs/task-checklist.md) for evidence and outstanding deployment checks.
+
+## Portal interface
+
+The portal uses a local gunmetal and phosphor-green visual system with an original
+Portcullis emblem. Dark is the default; the account area remembers a light-theme
+selection on this browser. Play, Community and Administration navigation adapts to
+an accessible drawer on smaller screens. Service health and access remain separate.
+
+Service editors organize Basics, Presentation, Connections, Access & dependencies,
+and Service information without changing their API payloads. Searchable checkbox
+pickers retain unavailable references. Validation opens the affected section before
+focusing it. Unsaved editors ask before dismissal and keep drafts in page memory;
+reload or sign-out clears them. Structured editors also offer an explicit discard.
+
+Browser checks exercise both roles at 390, 768 and 1440 pixels in both themes,
+including navigation, focus, history, contrast tokens, reduced motion, long content,
+artwork preservation and draft recovery. Screenshots are written under
+`test-results/refresh-visual-review-*` and uploaded by CI as `ui-review-screenshots`.
+Representative captures are in [docs/ui-refresh](docs/ui-refresh/).
 
 ## Portal forms
 

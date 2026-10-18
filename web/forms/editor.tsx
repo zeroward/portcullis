@@ -1,6 +1,8 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { revealField } from "../ui.js";
+import { presentFields } from "./presentation.js";
 import { api, ApiError } from "../api.js";
 import {
   defaults,
@@ -10,6 +12,13 @@ import {
   type FieldSpec,
   type Values,
 } from "./schema.js";
+// Drafts live only in this page session, never in browser storage.
+const drafts = new Map<string, Values>();
+
+export const DraftValuesContext = React.createContext<Record<string, string>>(
+  {},
+);
+
 export const LookupStatusContext = React.createContext<
   (id: string, ready: boolean) => void
 >(() => {});
@@ -151,11 +160,11 @@ export function ResourceSelect({
   );
   return (
     <div className="resource-select">
-      <label htmlFor={id}>
+      <label id={`${id}-label`} htmlFor={multiple ? undefined : id}>
         {label}
         {optional ? " (optional)" : ""}
       </label>
-      {options.length > 8 && (
+      {(multiple || options.length > 8) && (
         <input
           aria-label={`Search ${label}`}
           type="search"
@@ -178,63 +187,97 @@ export function ResourceSelect({
       ) : options.length === 0 ? (
         <p className="muted">No available {label.toLowerCase()}.</p>
       ) : null}
-      <select
-        id={id}
-        aria-invalid={invalid || undefined}
-        name={name}
-        multiple={multiple}
-        size={
-          multiple
-            ? Math.min(7, Math.max(3, displayed.length + missing.length))
-            : undefined
-        }
-        value={multiple ? selected : (value ?? "")}
-        disabled={loading || !!error || !source}
-        required={!optional && !multiple}
-        onChange={(e) =>
-          onChange(
-            multiple
-              ? Array.from(e.target.selectedOptions, (o) => o.value)
-              : e.target.value,
-          )
-        }
-      >
-        {!multiple && !options.some((o) => o.id === "") && (
-          <option value="">{optional ? "None" : "Choose…"}</option>
-        )}
-        {missing.map((v) => (
-          <option key={v} value={v}>
-            Unavailable current selection ({v.slice(0, 8)}) — retained
-          </option>
-        ))}
-        {displayed.map((o) => (
-          <option
-            key={o.id}
-            value={o.id}
-            disabled={o.disabled && !selected.includes(o.id)}
+      {multiple ? (
+        <fieldset
+          className="checkbox-picker"
+          aria-labelledby={`${id}-label`}
+          aria-invalid={invalid || undefined}
+          tabIndex={-1}
+          disabled={loading || !!error || !source}
+        >
+          <div
+            className="selected-items"
+            aria-label={`Selected ${label.toLowerCase()}`}
           >
-            {o.label}
-            {o.description ? ` · ${o.description}` : ""}
-            {o.disabled ? ` — ${o.reason ?? "Unavailable"}` : ""}
-          </option>
-        ))}
-      </select>
-      {invalid && <p className="error">Check {label.toLowerCase()}.</p>}
-      {multiple && (
-        <>
-          <small>
-            Use Ctrl / Cmd to choose multiple items.
-            {max ? ` Up to ${max}.` : ""}
-          </small>
-          <button
-            type="button"
-            onClick={() => onChange([])}
-            disabled={!selected.length}
-          >
-            Clear {label.toLowerCase()}
-          </button>
-        </>
+            <small>
+              {selected.length} selected{max ? ` · Up to ${max}` : ""}
+            </small>
+            {selected.map((v) => (
+              <button
+                type="button"
+                key={v}
+                aria-label={`Remove ${options.find((o) => o.id === v)?.label ?? "unavailable selection"}`}
+                onClick={() => onChange(selected.filter((s) => s !== v))}
+              >
+                {options.find((o) => o.id === v)?.label ??
+                  `Unavailable current selection (${v.slice(0, 8)}) — retained`}{" "}
+                <span aria-hidden="true">×</span>
+              </button>
+            ))}
+          </div>
+          <div className="picker-options">
+            {displayed.map((o) => (
+              <label className="checkbox" key={o.id}>
+                <input
+                  type="checkbox"
+                  name={name}
+                  value={o.id}
+                  checked={selected.includes(o.id)}
+                  disabled={
+                    !selected.includes(o.id) &&
+                    (o.disabled ||
+                      (max !== undefined && selected.length >= max))
+                  }
+                  onChange={(e) =>
+                    onChange(
+                      e.target.checked
+                        ? [...selected, o.id]
+                        : selected.filter((v) => v !== o.id),
+                    )
+                  }
+                />
+                <span>
+                  {o.label}
+                  {o.description && <small>{o.description}</small>}
+                  {o.disabled && <small>{o.reason ?? "Unavailable"}</small>}
+                </span>
+              </label>
+            ))}
+            {!displayed.length && search && <small>No matching options.</small>}
+          </div>
+        </fieldset>
+      ) : (
+        <select
+          id={id}
+          aria-invalid={invalid || undefined}
+          name={name}
+          value={value ?? ""}
+          disabled={loading || !!error || !source}
+          required={!optional}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {!options.some((o) => o.id === "") && (
+            <option value="">{optional ? "None" : "Choose…"}</option>
+          )}
+          {missing.map((v) => (
+            <option key={v} value={v}>
+              Unavailable current selection ({v.slice(0, 8)}) — retained
+            </option>
+          ))}
+          {displayed.map((o) => (
+            <option
+              key={o.id}
+              value={o.id}
+              disabled={o.disabled && !selected.includes(o.id)}
+            >
+              {o.label}
+              {o.description ? ` · ${o.description}` : ""}
+              {o.disabled ? ` — ${o.reason ?? "Unavailable"}` : ""}
+            </option>
+          ))}
+        </select>
       )}
+      {invalid && <p className="error">Check {label.toLowerCase()}.</p>}
       {((min !== undefined && selected.length < min) ||
         (max !== undefined && selected.length > max)) && (
         <p role="alert">
@@ -262,7 +305,8 @@ export function LookupField({
   value?: string;
   required?: boolean;
 }) {
-  const [selected, setSelected] = useState(value);
+  const draft = React.useContext(DraftValuesContext);
+  const [selected, setSelected] = useState(draft[name] ?? value);
   const status = React.useContext(LookupStatusContext),
     id = useId();
   return (
@@ -346,7 +390,7 @@ function EditorField({
   );
   if (f.kind === "object")
     return (
-      <fieldset>
+      <fieldset aria-invalid={errors.includes(path) || undefined} tabIndex={-1}>
         <legend>{f.label}</legend>
         {f.fields!.map((child) => (
           <EditorField
@@ -365,10 +409,18 @@ function EditorField({
     );
   if (f.kind === "list")
     return (
-      <fieldset>
+      <fieldset aria-invalid={errors.includes(path) || undefined} tabIndex={-1}>
         <legend>{f.label}</legend>
         {(value ?? []).map((v: any, i: number) => (
-          <div className="repeated-row" key={i}>
+          <details className="repeated-row" key={i} open>
+            <summary>
+              {f.item!.label || f.label} {i + 1}
+              {typeof v === "object"
+                ? ` · ${v.label || v.name || v.host || v.role || "New entry"}`
+                : v
+                  ? ` · ${v}`
+                  : ""}
+            </summary>
             <EditorField
               field={f.item!}
               value={v}
@@ -391,7 +443,7 @@ function EditorField({
             >
               Remove {f.item!.label} {i + 1}
             </button>
-          </div>
+          </details>
         ))}
         <button
           type="button"
@@ -533,6 +585,40 @@ function collectionError(
       }
   }
 }
+function collectionInvalidPaths(
+  fields: FieldSpec[],
+  values: Values,
+  root = values,
+  prefix = "",
+): string[] {
+  return fields.flatMap((f) => {
+    if (f.show && !f.show(root)) return [];
+    const v = values[f.key],
+      path = `${prefix}${f.key}`;
+    const paths =
+      (f.multiple || f.kind === "list") &&
+      ((f.min !== undefined && (v?.length ?? 0) < f.min) ||
+        (f.max !== undefined && (v?.length ?? 0) > f.max))
+        ? [path]
+        : [];
+    if (f.kind === "object")
+      paths.push(
+        ...collectionInvalidPaths(f.fields!, v ?? {}, root, `${path}.`),
+      );
+    if (f.kind === "list" && f.item?.kind === "object")
+      (v ?? []).forEach((row: Values, i: number) =>
+        paths.push(
+          ...collectionInvalidPaths(
+            f.item!.fields!,
+            row,
+            root,
+            `${path}.${i}.`,
+          ),
+        ),
+      );
+    return paths;
+  });
+}
 interface Props {
   title: string;
   url: string;
@@ -556,7 +642,10 @@ export function StructuredForm({
   inheritedRoles = [],
   channelPreferences = [],
 }: Props) {
-  const [values, setValues] = useState(() => defaults(fields, initial)),
+  const draftKey = `${method}:${url}:${title}`;
+  const [values, setValues] = useState(
+      () => drafts.get(draftKey) ?? defaults(fields, initial),
+    ),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [errors, setErrors] = useState<string[]>([]),
@@ -567,10 +656,32 @@ export function StructuredForm({
     [labels, setLabels] = useState<Record<string, string>>({}),
     [conflict, setConflict] = useState(false);
   const form = useRef<HTMLFormElement>(null);
+  const baseline = useRef(JSON.stringify(defaults(fields, initial)));
+  const dirty = JSON.stringify(values) !== baseline.current;
   useEffect(() => {
-    if (!busy && errors.length)
-      form.current?.querySelector<HTMLElement>("[aria-invalid=true]")?.focus();
+    if (dirty) drafts.set(draftKey, values);
+    else drafts.delete(draftKey);
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirty) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty, draftKey, values]);
+  useEffect(() => {
+    if (!busy && errors.length) {
+      const invalid = form.current?.querySelector<HTMLElement>(
+        "[aria-invalid=true]",
+      );
+      if (invalid) revealField(invalid);
+    }
   }, [busy, errors]);
+  const presented = presentFields(
+    fields,
+    /^\/api\/services(?:\/[^/]+)?$/.test(url),
+  );
   const confirmation =
     url.endsWith("/decide") && values.decision !== "approved"
       ? undefined
@@ -602,6 +713,8 @@ export function StructuredForm({
         ...payload(fields, values),
         ...(initial.confirmation ? { confirmation } : {}),
       };
+      const invalidPaths = collectionInvalidPaths(fields, values);
+      if (invalidPaths.length) setErrors(invalidPaths);
       const message =
         collectionError(fields, values) ||
         validate(body) ||
@@ -628,6 +741,16 @@ export function StructuredForm({
         throw new Error(`Type ${confirmation} to confirm.`);
       const response = await api(url, method, body);
       setResult(response);
+      drafts.delete(draftKey);
+      baseline.current = JSON.stringify({
+        ...values,
+        ...(values.version !== undefined &&
+        (response?.version !== undefined ||
+          response?.current_version !== undefined)
+          ? { version: response.current_version ?? response.version }
+          : {}),
+        ...(url === "/api/admin/secrets" ? { value: "" } : {}),
+      });
       if (
         values.version !== undefined &&
         (response?.version !== undefined ||
@@ -655,43 +778,76 @@ export function StructuredForm({
     <form
       ref={form}
       className="structured-form"
+      data-dirty={dirty}
+      noValidate
       onSubmit={(e) => {
         e.preventDefault();
+        const invalid = Array.from(e.currentTarget.elements).find(
+          (el) => "validity" in el && !(el as HTMLInputElement).validity.valid,
+        ) as HTMLInputElement | undefined;
+        if (invalid) {
+          revealField(invalid);
+          invalid.reportValidity();
+          return;
+        }
         void submit();
       }}
     >
       <fieldset disabled={busy} className="form-body">
-        {fields.map((f) => (
-          <EditorField
-            key={f.key}
-            field={f}
-            value={values[f.key]}
-            root={values}
-            path={f.key}
-            change={(v) => {
-              setValues((prev) => ({
-                ...prev,
-                [f.key]: v,
-                ...(f.key === "channel"
-                  ? {
-                      enabled:
-                        channelPreferences.find((p) => p.channel === v)
-                          ?.enabled ?? false,
-                    }
-                  : {}),
-                ...(["provider", "networkId"].includes(f.key) &&
-                "externalId" in prev
-                  ? { externalId: "" }
-                  : {}),
-              }));
-              setReview(undefined);
-              setTyped("");
-              setResult(undefined);
-            }}
-            status={status}
-            labels={addLabels}
-            errors={errors}
-          />
+        {[...new Set(presented.map((p) => p.group))].map((group) => (
+          <details
+            className="form-section"
+            key={group}
+            open={!presented.find((p) => p.group === group)?.advanced}
+          >
+            <summary>
+              {group}
+              <span>
+                {presented.filter((p) => p.group === group).length} fields
+              </span>
+            </summary>
+            <div className="section-fields">
+              {presented
+                .filter((p) => p.group === group)
+                .map(({ field: f, path }) => (
+                  <EditorField
+                    key={path}
+                    field={f}
+                    value={path.split(".").reduce((v, k) => v?.[k], values)}
+                    root={values}
+                    path={path}
+                    change={(v) => {
+                      setValues((prev) => {
+                        const next = structuredClone(prev);
+                        const keys = path.split(".");
+                        const key = keys.pop()!;
+                        const target = keys.reduce(
+                          (obj, k) => (obj[k] ??= {}),
+                          next,
+                        );
+                        target[key] = v;
+                        if (f.key === "channel")
+                          next.enabled =
+                            channelPreferences.find((p) => p.channel === v)
+                              ?.enabled ?? false;
+                        if (
+                          ["provider", "networkId"].includes(f.key) &&
+                          "externalId" in prev
+                        )
+                          next.externalId = "";
+                        return next;
+                      });
+                      setReview(undefined);
+                      setTyped("");
+                      setResult(undefined);
+                    }}
+                    status={status}
+                    labels={addLabels}
+                    errors={errors}
+                  />
+                ))}
+            </div>
+          </details>
         ))}
       </fieldset>
       {review && (
@@ -774,6 +930,8 @@ export function StructuredForm({
                   }
                   if (!latest)
                     throw new Error("Record is no longer available.");
+                  baseline.current = JSON.stringify(defaults(fields, latest));
+                  drafts.delete(draftKey);
                   setValues(defaults(fields, latest));
                   setConflict(false);
                   setReview(undefined);
@@ -788,24 +946,50 @@ export function StructuredForm({
           </button>
         </p>
       )}
-      <button
-        className="primary"
-        disabled={
-          busy ||
-          Object.values(blocked).some(Boolean) ||
-          !!(review && needsTyped && typed !== confirmation)
-        }
-      >
-        {busy
-          ? "Working…"
-          : review
-            ? `Confirm ${title.toLowerCase()}`
-            : previewUrl
-              ? `Preview ${title.toLowerCase()}`
-              : confirmation
-                ? `Review ${title.toLowerCase()}`
-                : title}
-      </button>
+      <div className="form-actions">
+        {dirty && (
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                !window.confirm(
+                  "Discard this draft and restore the last saved values?",
+                )
+              )
+                return;
+              drafts.delete(draftKey);
+              setValues(JSON.parse(baseline.current));
+              setReview(undefined);
+              setTyped("");
+              setErrors([]);
+              setError("");
+            }}
+          >
+            Discard draft
+          </button>
+        )}
+        <small>
+          {dirty ? "Unsaved changes · draft kept in memory" : "Ready to edit"}
+        </small>
+        <button
+          className="primary"
+          disabled={
+            busy ||
+            Object.values(blocked).some(Boolean) ||
+            !!(review && needsTyped && typed !== confirmation)
+          }
+        >
+          {busy
+            ? "Working…"
+            : review
+              ? `Confirm ${title.toLowerCase()}`
+              : previewUrl
+                ? `Preview ${title.toLowerCase()}`
+                : confirmation
+                  ? `Review ${title.toLowerCase()}`
+                  : title}
+        </button>
+      </div>
       {result !== undefined && (
         <section aria-label="Operation result">
           <p role="status">Saved.</p>
