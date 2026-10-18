@@ -244,17 +244,19 @@ for (const width of [390, 768, 1440])
       await expect(
         page.getByRole("button", { name: "Community hub", exact: true }),
       ).toBeFocused();
-      for (const name of [
-        "My access",
-        "My devices",
-        "Support",
-        "Guides",
-        "Get started",
-        "Community",
-        "Updates",
+      for (const [name, heading] of [
+        ["My access", "My access"],
+        ["My devices", "My devices"],
+        ["Support", "Community support"],
+        ["Guides", "Community guides"],
+        ["Get started", "Make yourself at home."],
+        ["Community", "Community news & service notices"],
+        ["Updates", "Your updates"],
       ]) {
         await navigate(page, name);
-        await expect(page.locator("main h1")).toBeVisible();
+        await expect(
+          page.getByRole("heading", { name: heading, exact: true, level: 1 }),
+        ).toBeVisible();
         await fits(page);
       }
       if (width < 901)
