@@ -1,0 +1,31 @@
+# Dependencies and generated build output
+node_modules/
+/dist/
+*.tsbuildinfo
+
+# Environment secrets; keep the documented template in version control
+.env
+.env.*
+!.env.example
+
+# Local database, uploads, credentials, and backups
+/.local/
+/uploads/
+/.aws/
+/backups/
+*.dump
+
+# Test reports and caches
+/coverage/
+/test-results/
+/playwright-report/
+/blob-report/
+.cache/
+
+# Logs and editor/OS temporary files
+*.log
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

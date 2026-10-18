@@ -1,0 +1,11 @@
+services:
+  db:
+    image: postgres:18.4-bookworm
+    environment:
+      POSTGRES_USER: portcullis
+      POSTGRES_PASSWORD: development
+      POSTGRES_DB: portcullis
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["development-db:/var/lib/postgresql"]
+volumes:
+  development-db:

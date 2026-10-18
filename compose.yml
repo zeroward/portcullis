@@ -1,0 +1,75 @@
+services:
+  db:
+    image: postgres:18.4-bookworm
+    environment:
+      POSTGRES_USER: portcullis
+      POSTGRES_DB: portcullis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set database password}
+    volumes:
+      - database:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U portcullis -d portcullis"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  migrate:
+    image: ${PORTCULLIS_IMAGE:-ghcr.io/zeroward/portcullis:main}
+    build: .
+    env_file: ${PORTCULLIS_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgres://portcullis:${POSTGRES_PASSWORD}@db:5432/portcullis
+    command: [node, dist/scripts/migrate.js]
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+  app:
+    image: ${PORTCULLIS_IMAGE:-ghcr.io/zeroward/portcullis:main}
+    build: .
+    env_file: ${PORTCULLIS_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://portcullis:${POSTGRES_PASSWORD}@db:5432/portcullis
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "127.0.0.1:${PORTCULLIS_PORT:-3000}:3000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+  worker:
+    image: ${PORTCULLIS_IMAGE:-ghcr.io/zeroward/portcullis:main}
+    build: .
+    env_file: ${PORTCULLIS_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://portcullis:${POSTGRES_PASSWORD}@db:5432/portcullis
+      UPLOAD_DIR: /app/uploads
+    command: [node, dist/src/worker.js]
+    healthcheck:
+      test: [CMD, node, dist/scripts/worker-health.js]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+volumes:
+  database:
+  uploads:
