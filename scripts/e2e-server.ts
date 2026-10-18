@@ -32,6 +32,7 @@ const issuer = await devIssuer();
 const fixture = await providerFixture();
 const config = loadConfig({
   NODE_ENV: "test",
+  RATE_LIMIT_MAX: "1000",
   DATABASE_URL: "postgres://test:test@127.0.0.1:55434/e2e",
   BASE_URL: "http://localhost:3000",
   ENCRYPTION_KEY: "1".repeat(64),
@@ -43,6 +44,7 @@ const config = loadConfig({
   POCKET_ID_API_KEY: "pocket-fixture-key",
   NETBIRD_URL: fixture.url,
   NETBIRD_TOKEN: "netbird-fixture-token",
+  CAPABILITY_OVERRIDES: '{"netbird.networks":true,"pocket.enrollment":true}',
   UPLOAD_DIR: join(dir, "uploads"),
 });
 const system = await createApp(config, { db, logger: false });

@@ -231,6 +231,7 @@ export class Admin {
       await invalidate(tx, user);
       await audit(tx, actor.id, "roles.change", user, d, user);
     });
+    return { ok: true };
   }
   async secret(actor: Actor, name: string, value: string) {
     requirePermission(actor, "*");

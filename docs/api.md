@@ -8,6 +8,21 @@ with Zod. Errors return {error, message?}; provider errors also include provider
 retryable. Missing objects use 404 to prevent ownership probing. List endpoints are
 bounded; ticket search/filtering is over authorized results only.
 
+## Form options
+
+`GET /api/form-options/:kind` returns minimal `{id,label,description?,disabled?,reason?}`
+choices for services, users, assignees, entitlements, guides, secret names, failed
+jobs, providers, Pocket ID users/groups and NetBird users/groups/peers/networks/resources.
+The `purpose` query parameter selects the applicable permission or group restrictions;
+resource lists require `networkId`, and assignees require `ticketId`. Service choices
+respect visibility or administrative scopes. Assignees must have scoped support/owner
+permissions. Provider lookups require the corresponding administrator permission.
+Secret lookups return names and references only, never ciphertext or secret values.
+
+`GET /api/admin/users/:id/roles` is owner-only and returns current roles with their
+source and an `editable` flag. The UI treats inherited roles as read-only and prevents
+self-editing. Successful role writes return `{ok:true}`.
+
 ## Authorization and workflow contracts
 
 - Catalog GET responses contain limited metadata for discoverable cards without
@@ -102,7 +117,7 @@ Provider credentials stay server-side; there is no generic provider proxy.
 | GET | `/api/admin/users` |
 | POST | `/api/admin/users/:id/offboard` |
 | POST | `/api/admin/users/:id/refresh-identity` |
-| PUT | `/api/admin/users/:id/roles` |
+| GET, PUT | `/api/admin/users/:id/roles` |
 | POST | `/api/admin/users/:id/suspend` |
 | POST | `/api/announcements` |
 | GET | `/api/approvals` |

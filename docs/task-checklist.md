@@ -80,6 +80,17 @@ test-only backup artifacts were retained. No application implementation fixes we
 needed. The restore runbook now explicitly creates the app container before copying
 uploads and stops on pg_restore errors; `.env.example` names POSTGRES_PASSWORD.
 
+2026-10-17: replaced portal JSON editors with explicit form fields, resource
+selectors, repeatable rows, Markdown previews and readable reviews/results. Added
+permission-aware minimal lookup APIs and current-role sources. Editors retain
+unavailable references and failed drafts, reload version conflicts explicitly,
+and invalidate edited network previews. One-time credentials have separate copy
+controls; secret reviews mask their values. Role updates now return a success
+response. Local acceptance passed 67 backend/payload tests and 14 Chromium workflows,
+including complete service/access payload preservation, lookup authorization,
+provider errors/retry, field focus, saved preferences, secret handling and concurrent
+edit recovery. Formatting, typecheck, lint and production build passed.
+
 ## Environment-dependent acceptance still required
 
 - [x] Build/start the production Compose stack on a Docker-capable host, apply
@@ -96,8 +107,8 @@ uploads and stops on pg_restore errors; `.env.example` names POSTGRES_PASSWORD.
 - [ ] Configure and test any desired external notification destinations. Core
   workflows work without SMTP; delivery failures are covered locally.
 
-These are environment-dependent checks, not missing-provider placeholders. No
-production deployment, provider mutation, push or publication has occurred.
+These are environment-dependent checks, not missing-provider placeholders.
+Production deployment and live provider mutation remain separate operator actions.
 
 ## Deliberate deferrals
 

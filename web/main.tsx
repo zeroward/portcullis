@@ -3,23 +3,16 @@ import { createRoot } from "react-dom/client";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./style.css";
+import { api, setCsrfToken } from "./api.js";
+import {
+  ActionForm,
+  StructuredForm,
+  ReadableResult,
+  LookupField,
+  LookupStatusContext,
+} from "./forms/editor.js";
 type Row = Record<string, any>;
 let csrf = "";
-async function api(url: string, method = "GET", body?: unknown) {
-  const r = await fetch(url, {
-    method,
-    credentials: "same-origin",
-    headers:
-      method === "GET"
-        ? {}
-        : { "content-type": "application/json", "x-csrf-token": csrf },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const result = await r.json();
-  if (!r.ok)
-    throw new Error(result.message ?? result.error ?? "Request failed");
-  return result;
-}
 function useData<T = any>(url: string) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
@@ -152,10 +145,12 @@ function Form({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState("");
+  const [lookups, setLookups] = useState<Record<string, boolean>>({});
   return (
     <form
       onSubmit={async (e) => {
         e.preventDefault();
+        if (Object.values(lookups).some(Boolean)) return;
         const data = new FormData(e.currentTarget);
         setBusy(true);
         setError("");
@@ -170,10 +165,17 @@ function Form({
         }
       }}
     >
-      {children}
+      <LookupStatusContext.Provider
+        value={(id, ready) => setLookups((prev) => ({ ...prev, [id]: !ready }))}
+      >
+        {children}
+      </LookupStatusContext.Provider>
       <State error={error} />
       {success && <p role="status">{success}</p>}
-      <button className="primary" disabled={busy}>
+      <button
+        className="primary"
+        disabled={busy || Object.values(lookups).some(Boolean)}
+      >
         {busy ? "Saving…" : label}
       </button>
     </form>
@@ -208,54 +210,6 @@ function Field({
     </label>
   );
 }
-function JsonAction({
-  title,
-  url,
-  initial,
-  method = "POST",
-  done,
-}: {
-  title: string;
-  url: string;
-  initial: unknown;
-  method?: string;
-  done?: () => void;
-}) {
-  const [result, setResult] = useState<unknown>();
-  return (
-    <details className="panel">
-      <summary>{title}</summary>
-      <Form
-        label={title}
-        onSubmit={async (f) => {
-          const result = await api(
-            url,
-            method,
-            JSON.parse(String(f.get("json"))),
-          );
-          done?.();
-          setResult(result);
-          return result;
-        }}
-      >
-        <label>
-          Configuration (JSON)
-          <textarea
-            className="code"
-            name="json"
-            rows={8}
-            defaultValue={JSON.stringify(initial, null, 2)}
-          />
-        </label>
-      </Form>
-      {result !== undefined && (
-        <pre aria-label="Operation result">
-          {JSON.stringify(result, null, 2)}
-        </pre>
-      )}
-    </details>
-  );
-}
 function DataTable({ rows, columns }: { rows: Row[]; columns: string[] }) {
   return rows.length ? (
     <div className="table-wrap">
@@ -272,9 +226,11 @@ function DataTable({ rows, columns }: { rows: Row[]; columns: string[] }) {
             <tr key={r.id ?? i}>
               {columns.map((c) => (
                 <td key={c}>
-                  {typeof r[c] === "object"
-                    ? JSON.stringify(r[c])
-                    : String(r[c] ?? "Unknown")}
+                  {typeof r[c] === "object" ? (
+                    <ReadableResult value={r[c]} />
+                  ) : (
+                    String(r[c] ?? "Unknown")
+                  )}
                 </td>
               ))}
             </tr>
@@ -333,7 +289,10 @@ function App() {
   );
   const [light, setLight] = useState(false);
   useEffect(() => {
-    if (me.data) csrf = me.data.csrf;
+    if (me.data) {
+      csrf = me.data.csrf;
+      setCsrfToken(csrf);
+    }
   }, [me.data]);
   useEffect(() => {
     document.documentElement.dataset.theme = light ? "light" : "dark";
@@ -839,111 +798,34 @@ function ServiceEditor({
   service: Row | null;
   done: () => void;
 }) {
-  const [meta, setMeta] = useState(
-    JSON.stringify(
-      service?.metadata ?? {
-        type: "game",
-        category: "Games",
-        tags: [],
-        provider: "manual",
-        description: "",
-        instructions: "",
-        endpoints: [],
-        links: [],
-        sortOrder: 0,
-      },
-      null,
-      2,
-    ),
-  );
-  const [deleted, setDeleted] = useState("");
   return (
     <>
-      <Form
-        onSubmit={async (f) => {
-          await api(
-            `/api/services${service ? `/${service.id}` : ""}`,
-            service ? "PUT" : "POST",
-            {
-              name: String(f.get("name")),
-              slug: String(f.get("slug")),
-              summary: String(f.get("summary")),
-              visibility: String(f.get("visibility")),
-              metadata: JSON.parse(meta),
-              entitlementIds: String(f.get("entitlements"))
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean),
-              dependencies: JSON.parse(String(f.get("dependencies"))),
-              version: service?.version,
-            },
-          );
-          done();
+      <StructuredForm
+        title="Save"
+        url={`/api/services${service ? `/${service.id}` : ""}`}
+        method={service ? "PUT" : "POST"}
+        initial={{
+          name: service?.name ?? "",
+          slug: service?.slug ?? "",
+          summary: service?.summary ?? "",
+          visibility: service?.visibility ?? "discoverable",
+          metadata: service?.metadata ?? {},
+          entitlementIds: service?.requirements?.map((e: Row) => e.id) ?? [],
+          dependencies: service?.dependencies ?? [],
+          version: service?.version,
         }}
-      >
-        <Field name="name" label="Name" value={service?.name} />
-        <Field name="slug" label="Slug" value={service?.slug} />
-        <Field
-          name="summary"
-          label="Card description"
-          value={service?.summary}
-        />
-        <label>
-          Visibility
-          <select
-            name="visibility"
-            defaultValue={service?.visibility ?? "discoverable"}
-          >
-            <option value="discoverable">
-              Discoverable (limited metadata)
-            </option>
-            <option value="entitled">Entitled users only</option>
-            <option value="admin">Administrators only</option>
-          </select>
-        </label>
-        <label>
-          Service metadata, artwork, endpoints and links
-          <textarea
-            className="code"
-            value={meta}
-            onChange={(e) => setMeta(e.target.value)}
-            rows={12}
-          />
-        </label>
-        <Field
-          name="entitlements"
-          label="Required entitlement IDs (comma separated)"
-          value={service?.requirements?.map((e: Row) => e.id).join(",") ?? ""}
-          required={false}
-        />
-        <Field
-          name="dependencies"
-          label="Dependencies (JSON: id, required)"
-          value={JSON.stringify(service?.dependencies ?? [])}
-        />
-        <p>
-          Only configured, validated application links are offered. An operating
-          system may need a URI handler installed.
-        </p>
-      </Form>
+        done={done}
+      />
       {service && (
-        <Form
-          label="Delete service"
-          onSubmit={async (f) => {
-            await api(`/api/services/${service.id}`, "DELETE", {
-              confirmation: String(f.get("confirmation")),
-            });
-            setDeleted("Deleted");
-            done();
-          }}
-        >
-          <Field
-            name="confirmation"
-            label="Type DELETE to remove this service"
-          />
-        </Form>
+        <ActionForm
+          title="Delete service"
+          url={`/api/services/${service.id}`}
+          method="DELETE"
+          fields={[]}
+          initial={{ confirmation: "DELETE" }}
+          done={done}
+        />
       )}
-      {deleted}
     </>
   );
 }
@@ -1155,11 +1037,11 @@ function TicketPage({ user }: { user: Row }) {
               </select>
             </label>
             <Field name="description" label="What happened?" type="textarea" />
-            <Field
+            <LookupField
               name="service"
-              label="Related service ID (optional)"
+              label="Related service"
+              source="/api/form-options/services?purpose=ticket"
               value={sessionStorage.getItem("ticket-service") ?? ""}
-              required={false}
             />
           </Form>
         </Modal>
@@ -1246,11 +1128,11 @@ function TicketDetail({ id, user }: { id: string; user: Row }) {
               </select>
             </label>
             {q.data.canStaff && (
-              <Field
+              <LookupField
                 name="assignee"
-                label="Assignee user ID"
+                label="Assignee"
+                source={`/api/form-options/assignees?ticketId=${id}`}
                 value={q.data.assignee_id ?? ""}
-                required={false}
               />
             )}
           </Form>
@@ -1430,7 +1312,7 @@ function Guide({ guide: g, refresh }: { guide: Row; refresh: () => void }) {
       )}
       {g.canManage && (
         <>
-          <JsonAction
+          <ActionForm
             title="Publish new guide version"
             url={`/api/guides/${g.id}`}
             method="PUT"
@@ -1598,7 +1480,7 @@ function NotificationPage() {
       ))}
       {q.data && !q.data.length && <Empty>You’re all caught up.</Empty>}
       <h2>Optional delivery</h2>
-      <JsonAction
+      <ActionForm
         title="Update delivery preference"
         url="/api/notification-preferences"
         method="PUT"
@@ -1711,17 +1593,20 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               />
             </section>
           ))}
-          <p>Provider versions: {JSON.stringify(q.data.providers)}</p>
-          <JsonAction
-            title="Retry failed job"
-            url={`/api/admin/jobs/${result?.jobId ?? "replace-with-job-id"}/retry`}
-            initial={{}}
-          />
+          <ReadableResult value={q.data.providers} />
           <Form
-            label="Select job"
-            onSubmit={async (f) => setResult({ jobId: String(f.get("job")) })}
+            label="Retry failed job"
+            onSubmit={async (f) => {
+              await api(`/api/admin/jobs/${f.get("job")}/retry`, "POST", {});
+              void done();
+            }}
           >
-            <Field name="job" label="Failed job ID" />
+            <LookupField
+              name="job"
+              label="Failed job"
+              source="/api/form-options/jobs"
+              required
+            />
           </Form>
         </>
       )}
@@ -1734,41 +1619,17 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
                 Requester: {r.user_id} · {r.duration_hours} hours
               </p>
               <Mark>{r.reason}</Mark>
-              <Form
-                label="Record decision"
-                onSubmit={async (f) => {
-                  await api(`/api/requests/${r.id}/decide`, "POST", {
-                    decision: String(f.get("decision")),
-                    reason: String(f.get("reason")),
-                    durationHours: Number(f.get("hours")),
-                    confirmation: String(f.get("confirmation")) || undefined,
-                  });
-                  void done();
+              <StructuredForm
+                title="Record decision"
+                url={`/api/requests/${r.id}/decide`}
+                initial={{
+                  decision: "approved",
+                  reason: "",
+                  durationHours: r.duration_hours,
+                  confirmation: "APPROVE",
                 }}
-              >
-                <label>
-                  Decision
-                  <select name="decision">
-                    <option value="approved">Approve</option>
-                    <option value="denied">Deny</option>
-                    <option value="needs-information">
-                      Request more information
-                    </option>
-                  </select>
-                </label>
-                <Field name="reason" label="Decision reason" type="textarea" />
-                <Field
-                  name="confirmation"
-                  label="Type APPROVE when approving access"
-                  required={false}
-                />
-                <Field
-                  name="hours"
-                  label="Approved duration (hours; cannot expand request)"
-                  type="number"
-                  value={r.duration_hours}
-                />
-              </Form>
+                done={done}
+              />
             </article>
           ))}
           {q.data && !q.data.length && <Empty>No pending approvals.</Empty>}
@@ -1800,7 +1661,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
                 columns={["id", "name", "friendlyName"]}
               />
               {result.users.map((u: Row) => (
-                <JsonAction
+                <ActionForm
                   key={u.id}
                   title={`Enrollment assistance for ${u.displayName}`}
                   url={`/api/admin/pocket-id/users/${u.id}/enrollment`}
@@ -1813,18 +1674,18 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
             rows={q.data ?? []}
             columns={["id", "name", "email", "suspended", "subject"]}
           />
-          <JsonAction
+          <ActionForm
             title="Verify identity link"
             url="/api/admin/links"
             initial={{
               userId: "",
-              provider: "netbird",
+              provider: "",
               externalId: "",
               reason: "Verified with operator",
               confirmation: "LINK",
             }}
           />
-          <JsonAction
+          <ActionForm
             title="Create Pocket ID user"
             url="/api/admin/pocket-id/users"
             initial={{
@@ -1834,7 +1695,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               confirmation: "CREATE USER",
             }}
           />
-          <JsonAction
+          <ActionForm
             title="Create Pocket ID group"
             url="/api/admin/pocket-id/groups"
             initial={{
@@ -1874,19 +1735,19 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
           {q.data?.map((u: Row) => (
             <details className="panel" key={u.id}>
               <summary>{u.name}</summary>
-              <JsonAction
+              <ActionForm
                 title="Refresh identity observation"
                 url={`/api/admin/users/${u.id}/refresh-identity`}
                 initial={{}}
               />
-              <JsonAction
+              <ActionForm
                 title="Change portal suspension"
                 url={`/api/admin/users/${u.id}/suspend`}
                 initial={{ suspended: !u.suspended, confirmation: "SUSPEND" }}
               />
               {user.roles.some((r: Row) => r.role === "owner") && (
                 <>
-                  <JsonAction
+                  <ActionForm
                     title="Change portal roles"
                     url={`/api/admin/users/${u.id}/roles`}
                     method="PUT"
@@ -1895,7 +1756,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
                       confirmation: "CHANGE ROLES",
                     }}
                   />
-                  <JsonAction
+                  <ActionForm
                     title="Offboard user"
                     url={`/api/admin/users/${u.id}/offboard`}
                     initial={{ confirmation: "OFFBOARD" }}
@@ -1930,7 +1791,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
             rows={q.data ?? []}
             columns={["id", "name", "visibility", "access"]}
           />
-          <JsonAction
+          <ActionForm
             title="Create guide"
             url="/api/guides"
             initial={{
@@ -1957,7 +1818,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               "expires_at",
             ]}
           />
-          <JsonAction
+          <ActionForm
             title="Create entitlement"
             url="/api/entitlements"
             initial={{
@@ -1974,12 +1835,12 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
             }}
             done={done}
           />
-          <JsonAction
+          <ActionForm
             title="Create bundle"
             url="/api/bundles"
             initial={{ name: "", requestable: true, entitlementIds: [] }}
           />
-          <JsonAction
+          <ActionForm
             title="Manage fulfillment binding"
             url="/api/admin/bindings"
             initial={{
@@ -1989,7 +1850,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               confirmation: "MANAGE",
             }}
           />
-          <JsonAction
+          <ActionForm
             title="Grant access"
             url="/api/grants"
             initial={{
@@ -2006,7 +1867,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               <summary>
                 {g.name} · {g.entitlement_name}
               </summary>
-              <JsonAction
+              <ActionForm
                 title="Revoke grant"
                 url={`/api/grants/${g.id}/revoke`}
                 initial={{ confirmation: "REVOKE" }}
@@ -2019,6 +1880,17 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
       )}
       {tab === "network" && q.data && (
         <>
+          <ActionForm
+            title="Verify NetBird identity link"
+            url="/api/admin/links"
+            initial={{
+              provider: "netbird",
+              userId: "",
+              externalId: "",
+              reason: "",
+              confirmation: "LINK",
+            }}
+          />
           <AsyncButton
             onClick={async () =>
               setResult({ advanced: await api("/api/admin/network/advanced") })
@@ -2026,9 +1898,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
           >
             Inspect advanced NetBird objects
           </AsyncButton>
-          {result?.advanced && (
-            <pre>{JSON.stringify(result.advanced, null, 2)}</pre>
-          )}
+          {result?.advanced && <ReadableResult value={result.advanced} />}
           <div className="banner">
             Provider configuration is distinct from traffic enforcement.
             Existing broad policies are preserved.
@@ -2051,7 +1921,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               />
             </section>
           ))}
-          <JsonAction
+          <ActionForm
             title="Create managed group"
             url="/api/admin/network/groups"
             initial={{
@@ -2070,7 +1940,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
                 Remove the observed peer {d.external_id} ({d.metadata.address})
                 from NetBird. Setup-key revocation alone does not remove a peer.
               </p>
-              <JsonAction
+              <ActionForm
                 title="Remove device"
                 url={`/api/devices/${d.id}`}
                 method="DELETE"
@@ -2090,7 +1960,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
                 remain enrolled.
               </p>
               {!k.revoked_at && (
-                <JsonAction
+                <ActionForm
                   title="Revoke enrollment key"
                   url={`/api/admin/network/setup-keys/${k.id}/revoke`}
                   initial={{ confirmation: "REVOKE KEY" }}
@@ -2099,43 +1969,21 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               )}
             </details>
           ))}
-          <Form
-            label="Preview narrow policy"
-            onSubmit={async (f) =>
-              setResult(
-                await api(
-                  "/api/admin/network/policy-preview",
-                  "POST",
-                  JSON.parse(String(f.get("policy"))),
-                ),
-              )
-            }
-          >
-            <Field
-              name="policy"
-              label="Policy configuration (JSON)"
-              type="textarea"
-              value={JSON.stringify({
-                name: "Gaming access",
-                sourceGroup: "",
-                destinationGroup: "",
-                protocol: "tcp",
-                ports: [3724],
-              })}
-            />
-          </Form>
-          {result?.desired?.sourceGroup && (
-            <>
-              <pre>{JSON.stringify(result, null, 2)}</pre>
-              <JsonAction
-                title="Apply previewed policy"
-                url="/api/admin/network/policies"
-                initial={{ ...result.desired, confirmation: "CREATE POLICY" }}
-                done={done}
-              />
-            </>
-          )}
-          <JsonAction
+          <ActionForm
+            title="Create narrow policy"
+            url="/api/admin/network/policies"
+            previewUrl="/api/admin/network/policy-preview"
+            initial={{
+              name: "Gaming access",
+              sourceGroup: "",
+              destinationGroup: "",
+              protocol: "tcp",
+              ports: [3724],
+              confirmation: "CREATE POLICY",
+            }}
+            done={done}
+          />
+          <ActionForm
             title="Map existing routed resource"
             url="/api/admin/network/resources/map"
             initial={{
@@ -2145,45 +1993,25 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               confirmation: "MAP INFRASTRUCTURE",
             }}
           />
-          <Form
-            label="Preview routed resource"
-            onSubmit={async (f) =>
-              setResult(
-                await api(
-                  "/api/admin/network/resource-preview",
-                  "POST",
-                  JSON.parse(String(f.get("resource"))),
-                ),
-              )
-            }
-          >
-            <Field
-              name="resource"
-              label="Single-host resource (JSON)"
-              type="textarea"
-              value={JSON.stringify({
-                networkId: "",
-                serviceId: "",
-                resource: {
-                  name: "",
-                  address: "192.168.10.5",
-                  groups: [],
-                  enabled: true,
-                },
-              })}
-            />
-          </Form>
-          {result?.desired?.resource && (
-            <>
-              <pre>{JSON.stringify(result, null, 2)}</pre>
-              <JsonAction
-                title="Apply previewed resource"
-                url="/api/admin/network/resources"
-                initial={{ ...result.desired, confirmation: "CREATE RESOURCE" }}
-              />
-            </>
-          )}
-          <JsonAction
+          <ActionForm
+            title="Create routed resource"
+            url="/api/admin/network/resources"
+            previewUrl="/api/admin/network/resource-preview"
+            initial={{
+              networkId: "",
+              serviceId: "",
+              resource: {
+                name: "",
+                address: "",
+                groups: [],
+                enabled: true,
+                description: "",
+              },
+              confirmation: "CREATE RESOURCE",
+            }}
+            done={done}
+          />
+          <ActionForm
             title="Associate existing routing peer"
             url="/api/admin/network/routers"
             initial={{
@@ -2197,36 +2025,16 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               confirmation: "ASSOCIATE ROUTER",
             }}
           />
-          <Form
-            label="Create enrollment key"
-            onSubmit={async (f) =>
-              setResult(
-                await api(
-                  "/api/admin/network/setup-keys",
-                  "POST",
-                  JSON.parse(String(f.get("key"))),
-                ),
-              )
-            }
-          >
-            <Field
-              name="key"
-              label="Authorized special-case enrollment (JSON)"
-              type="textarea"
-              value={JSON.stringify({
-                userId: "",
-                name: "One device",
-                groups: [],
-                confirmation: "CREATE ENROLLMENT KEY",
-              })}
-            />
-          </Form>
-          {result?.key && (
-            <div className="panel">
-              <code>{result.key}</code>
-              <p>{result.reveal}</p>
-            </div>
-          )}
+          <ActionForm
+            title="Create enrollment key"
+            url="/api/admin/network/setup-keys"
+            initial={{
+              userId: "",
+              name: "One device",
+              groups: [],
+              confirmation: "CREATE ENROLLMENT KEY",
+            }}
+          />
         </>
       )}
       {tab === "monitoring" && (
@@ -2235,7 +2043,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
             rows={q.data ?? []}
             columns={["id", "service_id", "kind", "enabled", "next_run"]}
           />
-          <JsonAction
+          <ActionForm
             title="Create health check"
             url="/api/health/checks"
             initial={{
@@ -2253,7 +2061,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
           {q.data
             ?.filter((c: Row) => c.kind === "manual")
             .map((c: Row) => (
-              <JsonAction
+              <ActionForm
                 key={c.id}
                 title={`Set manual status ${c.id}`}
                 url={`/api/health/checks/${c.id}/manual`}
@@ -2264,12 +2072,12 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
       )}
       {tab === "notices" && (
         <>
-          <JsonAction
+          <ActionForm
             title="Publish announcement"
             url="/api/announcements"
             initial={{ title: "", body: "", serviceId: null }}
           />
-          <JsonAction
+          <ActionForm
             title="Schedule maintenance"
             url="/api/maintenance"
             initial={{
@@ -2279,7 +2087,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
               endsAt: new Date(Date.now() + 3600000).toISOString(),
             }}
           />
-          <JsonAction
+          <ActionForm
             title="Create incident"
             url="/api/incidents"
             initial={{
@@ -2290,7 +2098,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
             }}
           />
           {q.data?.incidents.map((n: Row) => (
-            <JsonAction
+            <ActionForm
               key={n.id}
               title={`Update ${n.title}`}
               url={`/api/incidents/${n.id}`}
@@ -2305,13 +2113,13 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
           {q.data?.maintenance.map((m: Row) => (
             <section key={m.id}>
               <h3>{m.title}</h3>
-              <JsonAction
+              <ActionForm
                 title={`Start ${m.title}`}
                 url={`/api/maintenance/${m.id}/start`}
                 initial={{}}
                 done={done}
               />
-              <JsonAction
+              <ActionForm
                 title={`End ${m.title}`}
                 url={`/api/maintenance/${m.id}/end`}
                 initial={{}}
@@ -2351,7 +2159,7 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
             outbound destinations are configured by the operator in environment
             settings.
           </p>
-          <JsonAction
+          <ActionForm
             title="Rotate stored secret"
             url="/api/admin/secrets"
             initial={{
@@ -2384,7 +2192,7 @@ function AccessConfiguration() {
             Updates apply to new requests. Existing grants retain their approved
             snapshots.
           </p>
-          <JsonAction
+          <ActionForm
             title={`Edit entitlement ${e.name}`}
             url={`/api/entitlements/${e.id}`}
             method="PUT"
@@ -2410,7 +2218,7 @@ function AccessConfiguration() {
         </details>
       ))}
       {q.data?.bundles.map((b: Row) => (
-        <JsonAction
+        <ActionForm
           key={`${b.id}:${b.version}`}
           title={`Edit bundle ${b.name}`}
           url={`/api/bundles/${b.id}`}
@@ -2447,7 +2255,7 @@ function Steps() {
             <p>{s.error}</p>
             {s.error?.includes("Manual") ||
             s.error?.includes("specification") ? (
-              <JsonAction
+              <ActionForm
                 title={
                   s.status === "revocation-failed"
                     ? "Attest manual removal"

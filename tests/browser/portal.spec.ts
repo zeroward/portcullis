@@ -33,10 +33,10 @@ test("member request → admin approval → real provider fulfillment and owned 
     .click();
   await staff.getByRole("button", { name: "approvals", exact: true }).click();
   await staff
-    .getByLabel("Decision reason")
+    .getByLabel("Reason", { exact: true })
     .fill("Approved for community gaming");
-  await staff.getByLabel("Type APPROVE when approving access").fill("APPROVE");
-  await staff.getByRole("button", { name: "Record decision" }).click();
+  await staff.getByRole("button", { name: "Review record decision" }).click();
+  await staff.getByRole("button", { name: "Confirm record decision" }).click();
   await expect
     .poll(async () => {
       const response = await page.request.get("/api/access");
@@ -86,10 +86,10 @@ test("unavailable WoW fulfillment is blocked and admin can explicitly attest man
     .click();
   await staff.getByRole("button", { name: "approvals", exact: true }).click();
   await staff
-    .getByLabel("Decision reason")
+    .getByLabel("Reason", { exact: true })
     .fill("Manual account setup will be recorded separately");
-  await staff.getByLabel("Type APPROVE when approving access").fill("APPROVE");
-  await staff.getByRole("button", { name: "Record decision" }).click();
+  await staff.getByRole("button", { name: "Review record decision" }).click();
+  await staff.getByRole("button", { name: "Confirm record decision" }).click();
   await expect
     .poll(async () => {
       const response = await page.request.get("/api/access");
@@ -122,15 +122,19 @@ test("unavailable WoW fulfillment is blocked and admin can explicitly attest man
     .first()
     .click();
   const form = staff.locator("form").filter({
-    has: staff.getByRole("button", { name: "Attest manual fulfillment" }),
-  });
-  await form.locator("textarea").fill(
-    JSON.stringify({
-      reason: "Manually configured the designated test account",
-      confirmation: "ATTEST",
+    has: staff.getByRole("button", {
+      name: "Review attest manual fulfillment",
     }),
-  );
-  await form.getByRole("button", { name: "Attest manual fulfillment" }).click();
+  });
+  await form
+    .getByLabel("Reason", { exact: true })
+    .fill("Manually configured the designated test account");
+  await form
+    .getByRole("button", { name: "Review attest manual fulfillment" })
+    .click();
+  await staff
+    .getByRole("button", { name: "Confirm attest manual fulfillment" })
+    .click();
   await page.getByRole("button", { name: "Services", exact: true }).click();
   await expect
     .poll(async () => {
@@ -248,8 +252,15 @@ test("service editing preserves dependency mappings", async ({ page }) => {
     .click();
   await page.getByRole("button", { name: "Edit service", exact: true }).click();
   await expect(
-    page.getByLabel("Dependencies (JSON: id, required)"),
-  ).toHaveValue(JSON.stringify([{ id: dependency.id, required: false }]));
+    page
+      .getByRole("group", { name: "Dependencies", exact: true })
+      .getByLabel("Service", { exact: true }),
+  ).toHaveValue(dependency.id);
+  await expect(
+    page
+      .getByRole("group", { name: "Dependencies", exact: true })
+      .getByLabel("Required", { exact: true }),
+  ).not.toBeChecked();
   await page.getByLabel("Card description").fill("After editing");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);

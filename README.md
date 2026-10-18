@@ -59,9 +59,23 @@ No production credentials or resource writes are needed. Ports 4100, 4200, 4300,
 `npm run build` is required before browser tests after frontend changes.
 `npm run format` applies the source formatter; `npm run check` checks formatting too.
 
-Latest local verification: 58 backend tests and 7 Chromium workflows passed, plus
+Latest local verification: 67 backend/payload tests and 14 Chromium workflows passed, plus
 formatting, typecheck, lint and production build. See the persistent
 [checklist](docs/task-checklist.md) for evidence and outstanding deployment checks.
+
+## Portal forms
+
+Administrative editors use named fields, dropdowns and repeatable rows, including
+service metadata, dependencies, access policies, identity links, network resources,
+monitoring and notices. Markdown fields have rendered previews. Resource choices
+load when an editor opens and are filtered by permission; unavailable current
+references remain visible and are retained until explicitly changed.
+
+Actions requiring confirmation show a review before applying. Network policy and
+resource previews are invalidated by edits. Role changes, offboarding, service
+deletion and secret rotation also require typed confirmation. Failed saves retain
+the draft, and version conflicts offer an explicit reload. Enrollment credentials
+appear in a separate copy-and-hide display; secret values never appear in reviews.
 
 ## Deploy behind existing ingress
 

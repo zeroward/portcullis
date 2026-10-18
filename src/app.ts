@@ -32,6 +32,7 @@ import {
 } from "./domain/authorization.js";
 import { audit, enqueue } from "./domain/audit.js";
 import type { IntegrationClients } from "./domain/jobs.js";
+import { registerFormOptions } from "./form-options.js";
 
 export function integrationClients(config: Config): IntegrationClients {
   const caps = JSON.parse(config.CAPABILITY_OVERRIDES);
@@ -159,6 +160,7 @@ export async function createApp(
     }
   });
   app.get("/healthz", () => ({ status: "ok" }));
+  registerFormOptions(app, db, clients, config);
   app.get("/readyz", async () => {
     await db.query("SELECT 1 FROM schema_migrations LIMIT 1");
     return { status: "ready" };

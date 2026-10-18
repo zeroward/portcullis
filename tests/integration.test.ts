@@ -187,6 +187,144 @@ afterAll(async () => {
   await db?.close();
   await pg?.stop();
 });
+describe("form lookup authorization and minimal projections", () => {
+  it("limits lookups by permission and never returns stored secret values", async () => {
+    for (const path of [
+      "users?purpose=identity.manage",
+      "netbird-users",
+      "pocket-groups",
+      "secrets",
+      "jobs",
+      "providers?purpose=binding",
+      "entitlements",
+    ]) {
+      expect((await call(member, `/api/form-options/${path}`)).statusCode).toBe(
+        403,
+      );
+    }
+    const secret = await call(owner, "/api/admin/secrets", "POST", {
+      name: "form-test-secret",
+      value: "never-return-this-value",
+      confirmation: "ROTATE SECRET",
+    });
+    expect(secret.statusCode).toBe(200);
+    const choices = await call(owner, "/api/form-options/secrets");
+    expect(choices.statusCode).toBe(200);
+    expect(choices.json()).toContainEqual({
+      id: secret.json().id,
+      label: "form-test-secret",
+    });
+    expect(choices.body).not.toMatch(
+      /ciphertext|never-return-this-value|updated_by/,
+    );
+    const users = await call(
+      owner,
+      "/api/form-options/users?purpose=identity.manage",
+    );
+    expect(
+      users
+        .json()
+        .every((u: any) =>
+          Object.keys(u).every((k) =>
+            ["id", "label", "description", "disabled", "reason"].includes(k),
+          ),
+        ),
+    ).toBe(true);
+    const groups = (
+      await call(owner, "/api/form-options/netbird-groups?purpose=binding")
+    ).json();
+    expect(groups.find((g: any) => g.label === "All").disabled).toBe(true);
+    expect(
+      (await call(owner, `/api/admin/users/${owner.id}/roles`)).json().editable,
+    ).toBe(false);
+    expect(
+      (await call(member, `/api/admin/users/${member.id}/roles`)).statusCode,
+    ).toBe(403);
+  });
+  it("returns success for role changes and preserves inherited role sources", async () => {
+    const [service] = await db.query("SELECT id FROM services LIMIT 1");
+    const inherited = await db.query(
+      "SELECT role,scope,source FROM roles WHERE user_id=$1 AND source<>'operator' ORDER BY role",
+      [support.id],
+    );
+    const result = await call(
+      owner,
+      `/api/admin/users/${support.id}/roles`,
+      "PUT",
+      {
+        roles: [{ role: "support", scope: service.id }],
+        confirmation: "CHANGE ROLES",
+      },
+    );
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toEqual({ ok: true });
+    const roles = (
+      await call(owner, `/api/admin/users/${support.id}/roles`)
+    ).json();
+    expect(roles.roles.filter((r: any) => r.source !== "operator")).toEqual(
+      inherited,
+    );
+    expect(roles.roles).toContainEqual({
+      role: "support",
+      scope: service.id,
+      source: "operator",
+    });
+    await db.query("DELETE FROM roles WHERE user_id=$1 AND source='operator'", [
+      support.id,
+    ]);
+    support = await login("dev-support");
+  });
+  it("filters service scopes and ticket assignees without disclosing unrelated services", async () => {
+    const [first, second] = await db.query(
+      "SELECT id FROM services ORDER BY id LIMIT 2",
+    );
+    await db.query(
+      "INSERT INTO roles(user_id,role,scope) VALUES ($1,'service-admin',$2)",
+      [support.id, first.id],
+    );
+    try {
+      const result = await call(
+        support,
+        "/api/form-options/services?purpose=monitor.manage",
+      );
+      expect(result.statusCode).toBe(200);
+      expect(result.json().map((o: any) => o.id)).toEqual([first.id]);
+      expect(result.body).not.toContain(second.id);
+      expect(
+        (await call(support, "/api/form-options/users?purpose=identity.manage"))
+          .statusCode,
+      ).toBe(403);
+    } finally {
+      await db.query(
+        "DELETE FROM roles WHERE user_id=$1 AND role='service-admin'",
+        [support.id],
+      );
+    }
+    const ticket = await call(member, "/api/tickets", "POST", {
+      subject: "Form lookup test",
+      description: "Check ticket assignment privacy",
+      priority: "normal",
+      type: "technical problem",
+      serviceId: first.id,
+    });
+    expect(ticket.statusCode).toBe(200);
+    const assignees = await call(
+      owner,
+      `/api/form-options/assignees?ticketId=${ticket.json().id}`,
+    );
+    expect(assignees.statusCode).toBe(200);
+    expect(assignees.json().some((a: any) => a.id === owner.id)).toBe(true);
+    expect(assignees.json().some((a: any) => a.id === member.id)).toBe(false);
+    expect(
+      (
+        await call(
+          member,
+          `/api/form-options/assignees?ticketId=${ticket.json().id}`,
+        )
+      ).statusCode,
+    ).toBe(403);
+  });
+});
 describe("OIDC and portal authorization", () => {
   it("migrates once on a clean real PostgreSQL database and seeds only explicitly", async () => {
     expect((await db.query("SELECT * FROM schema_migrations")).length).toBe(2);
