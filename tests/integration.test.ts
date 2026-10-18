@@ -800,6 +800,44 @@ describe("approval and durable real provider-client fulfillment", () => {
   });
 });
 describe("network, health, notices and audit", () => {
+  it("loads network administration when NetBird group collections are null", async () => {
+    const response = await call(owner, "/api/admin/network");
+    expect(response.statusCode).toBe(200);
+    const network = response.json();
+    expect(network.groups.find((g: any) => g.id === "all")).toMatchObject({
+      peers: [],
+      resources: [],
+    });
+    expect(network.groups.find((g: any) => g.id === "nb-server").peers).toEqual(
+      [{ id: "realm-peer" }],
+    );
+    expect(network.warnings).toHaveLength(1);
+  });
+  it("reports NetBird contract field paths without exposing upstream values", async () => {
+    const group = fixture.state.groups[0];
+    const originalName = group.name;
+    (group as any).name = { privateValue: "do-not-expose-provider-data" };
+    try {
+      const response = await call(owner, "/api/admin/network");
+      expect(response.statusCode).toBe(502);
+      expect(response.json()).toMatchObject({
+        error: "contract-mismatch",
+        provider: "netbird",
+        details: {
+          method: "GET",
+          path: "/api/groups",
+          status: 200,
+          reason: "invalid-response",
+          fields: ["0.name"],
+        },
+      });
+      expect(response.json().message).toContain("GET /api/groups");
+      expect(response.body).not.toContain("do-not-expose-provider-data");
+      expect(response.body).not.toContain("netbird-fixture-token");
+    } finally {
+      group.name = originalName;
+    }
+  });
   it("owned devices filter other users and unavailable telemetry stays null", async () => {
     fixture.state.peers.push({
       id: "other-peer",

@@ -177,13 +177,19 @@ export async function providerFixture(port = 4200) {
   app.post("/api/users/:id/one-time-access-token", () => ({
     token: "sensitive-enrollment-token",
   }));
-  app.get("/api/groups", () => state.groups);
-  app.get(
-    "/api/groups/:id",
-    (r, reply) =>
-      state.groups.find((g) => g.id === (r.params as any).id) ??
-      reply.code(404).send({ error: "not_found" }),
-  );
+  // NetBird's Go handler serializes empty peer/resource slices as null.
+  const groupResponse = (group: (typeof state.groups)[number]) => ({
+    ...group,
+    peers: group.peers.length ? group.peers : null,
+    resources: group.resources.length ? group.resources : null,
+  });
+  app.get("/api/groups", () => state.groups.map(groupResponse));
+  app.get("/api/groups/:id", (r, reply) => {
+    const group = state.groups.find((g) => g.id === (r.params as any).id);
+    return group
+      ? groupResponse(group)
+      : reply.code(404).send({ error: "not_found" });
+  });
   app.put("/api/groups/:id", async (r, reply) => {
     const b = z
       .object({
@@ -203,7 +209,7 @@ export async function providerFixture(port = 4200) {
       peers: b.peers.map((id) => ({ id })),
       resources: b.resources,
     });
-    return group;
+    return groupResponse(group);
   });
   app.put("/api/users/:id", async (r, reply) => {
     const b = z

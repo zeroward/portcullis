@@ -11,6 +11,13 @@ against the installation. An unavailable optional API returns a capability/error
 state, not fake success. Read discovery covers users, peers, groups, policies,
 accounts/settings, DNS, events, setup-key metadata, networks, resources and routers.
 
+Empty group `peers` and `resources` collections may be JSON `null` in NetBird
+responses; Portcullis normalizes those to empty arrays while still rejecting malformed
+memberships. A `contract-mismatch` response includes the upstream request path,
+HTTP status, failure reason, and invalid field paths. `invalid-json` can indicate an
+HTML page from an incorrectly routed proxy; `invalid-response` identifies a JSON
+schema mismatch. Response values and credentials are excluded from these diagnostics.
+
 Network administrators explicitly verify local-user → NetBird-user links. Emails
 are labels only; Pocket ID subjects are never assumed to equal NetBird IDs. Only
 peers reported under the verified NetBird owner become My devices records. Missing

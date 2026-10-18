@@ -133,6 +133,12 @@ export async function createApp(
         error: error.code,
         provider: error.provider,
         retryable: error.retryable,
+        ...(error.details
+          ? {
+              details: error.details,
+              message: `${error.message}: ${error.details.method} ${error.details.path} (${error.details.reason}${error.details.fields?.length ? `: ${error.details.fields.join(", ")}` : ""})`,
+            }
+          : {}),
       });
     const pgCode = (error as any).code;
     if (["23505", "23503", "23514"].includes(pgCode))

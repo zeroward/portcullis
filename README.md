@@ -59,7 +59,7 @@ No production credentials or resource writes are needed. Ports 4100, 4200, 4300,
 `npm run build` is required before browser tests after frontend changes.
 `npm run format` applies the source formatter; `npm run check` checks formatting too.
 
-Latest local verification: 53 backend tests and 7 Chromium workflows passed, plus
+Latest local verification: 58 backend tests and 7 Chromium workflows passed, plus
 formatting, typecheck, lint and production build. See the persistent
 [checklist](docs/task-checklist.md) for evidence and outstanding deployment checks.
 

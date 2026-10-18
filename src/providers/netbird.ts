@@ -29,10 +29,15 @@ export const nbGroup = z
     id: z.string(),
     name: z.string(),
     issued: z.string().optional(),
-    peers: z.array(idObject).default([]),
+    // NetBird serializes empty Go slices as null, including on populated groups.
+    peers: z
+      .array(idObject)
+      .nullish()
+      .transform((value) => value ?? []),
     resources: z
       .array(z.object({ id: z.string(), type: z.string() }).passthrough())
-      .default([]),
+      .nullish()
+      .transform((value) => value ?? []),
   })
   .passthrough();
 export const narrowPolicy = z
