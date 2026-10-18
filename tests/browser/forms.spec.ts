@@ -215,13 +215,11 @@ test("guides, notices, maintenance and preferences use fillable fields", async (
         .filter({ hasText: /^Browser form guide · version/ }),
     })
     .first();
-  const edit = guideContainer
-    .locator("details")
-    .filter({
-      has: page
-        .locator("summary")
-        .filter({ hasText: /^Publish new guide version$/ }),
-    });
+  const edit = guideContainer.locator("details").filter({
+    has: page
+      .locator("summary")
+      .filter({ hasText: /^Publish new guide version$/ }),
+  });
   await edit.locator("summary").click();
   for (const version of [2, 3]) {
     await edit
