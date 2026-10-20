@@ -119,6 +119,7 @@ Provider credentials stay server-side; there is no generic provider proxy.
 | POST | `/api/admin/users/:id/refresh-identity` |
 | GET, PUT | `/api/admin/users/:id/roles` |
 | POST | `/api/admin/users/:id/suspend` |
+| GET | `/api/admin/waygate` |
 | POST | `/api/announcements` |
 | GET | `/api/approvals` |
 | GET | `/api/bundles` |
@@ -173,6 +174,7 @@ Provider credentials stay server-side; there is no generic provider proxy.
 | PUT | `/api/services/:id` |
 | PUT | `/api/services/:id/favorite` |
 | GET | `/api/services/:id/rdp` |
+| GET | `/api/services/:id/waygate` |
 | POST | `/api/steps/:id/attest` |
 | GET | `/api/tickets` |
 | POST | `/api/tickets` |

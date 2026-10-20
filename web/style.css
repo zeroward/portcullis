@@ -231,31 +231,9 @@ aside {
 .eyebrow {
   font-size: 0.65rem;
   letter-spacing: 0.16em;
-  margin: 15px 0 14px;
+  margin: 15px 0 22px;
   font-weight: 700;
   text-transform: uppercase;
-}
-.lobby-beacon {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  margin-bottom: 18px;
-  border: 1px solid color-mix(in srgb, var(--hud-cyan) 40%, var(--line));
-  background: color-mix(in srgb, var(--hud-cyan) 10%, var(--panel));
-  font-family: var(--mono);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: var(--text);
-  clip-path: var(--chamfer-sm);
-}
-.beacon-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 8px var(--success);
 }
 nav {
   display: grid;
@@ -312,7 +290,7 @@ header a {
 .header-telemetry {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .telemetry-pill {
   padding: 3px 8px;
@@ -321,7 +299,8 @@ header a {
   color: var(--text);
   font-family: var(--mono);
   font-size: 0.6rem;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
 }
 main {
   max-width: 1480px;
@@ -1619,30 +1598,13 @@ tbody tr:hover {
   overflow: hidden;
 }
 .login .brand {
-  margin-bottom: 10vh;
-}
-.login-telemetry {
-  position: relative;
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.login-telemetry span {
-  padding: 4px 10px;
-  border: 1px solid color-mix(in srgb, var(--hud-cyan) 45%, var(--line));
-  background: color-mix(in srgb, var(--hud-cyan) 10%, var(--panel));
-  font-family: var(--mono);
-  font-size: 0.64rem;
-  letter-spacing: 0.14em;
-  color: var(--text);
-  clip-path: var(--chamfer-sm);
+  margin-bottom: 12vh;
 }
 .login h1 {
   position: relative;
   font-size: clamp(3rem, 6vw, 5.5rem);
   line-height: 1.03;
-  margin: 14px 0 24px;
+  margin: 20px 0 24px;
 }
 .login > p:not(.eyebrow),
 .login > small {
@@ -1716,6 +1678,9 @@ tbody tr:hover {
     right: -180px;
     opacity: 0.5;
   }
+  .header-label {
+    display: none;
+  }
 }
 @media (max-width: 900px) {
   .shell {
@@ -1776,7 +1741,6 @@ tbody tr:hover {
   main {
     padding: 24px 18px;
   }
-  .header-label,
   .telemetry-pill {
     display: none;
   }

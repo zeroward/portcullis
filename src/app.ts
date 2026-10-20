@@ -14,6 +14,7 @@ import { AppError, invariant } from "./errors.js";
 import { equal, signedBody, redact } from "./security.js";
 import { PocketIdClient } from "./providers/pocket-id.js";
 import { NetBirdClient, narrowPolicy } from "./providers/netbird.js";
+import { WaygateClient } from "./providers/waygate.js";
 import { ProviderError } from "./providers/http.js";
 import { serviceProviders } from "./providers/contracts.js";
 import { Catalog, rdpFile } from "./domain/catalog.js";
@@ -46,6 +47,13 @@ export function integrationClients(config: Config): IntegrationClients {
       : undefined,
     netbird: config.NETBIRD_URL
       ? new NetBirdClient(config.NETBIRD_URL, config.NETBIRD_TOKEN ?? "", caps)
+      : undefined,
+    waygate: config.WAYGATE_URL
+      ? new WaygateClient(
+          config.WAYGATE_URL,
+          config.WAYGATE_TOKEN ?? config.MANAGEMENT_API_TOKEN ?? "",
+          caps,
+        )
       : undefined,
     protectedPocketGroups: Object.entries(
       JSON.parse(config.ROLE_GROUP_MAPPINGS),
@@ -165,12 +173,24 @@ export async function createApp(
     await db.query("SELECT 1 FROM schema_migrations LIMIT 1");
     return { status: "ready" };
   });
-  app.get("/api/me", async (r) => ({
-    ...r.actor,
-    sessionId: undefined,
-    authenticatedAt: undefined,
-    development: config.NODE_ENV !== "production",
-  }));
+  app.get("/api/me", async (r) => {
+    const [diagnostics] = await db.query(
+      `SELECT
+        (SELECT count(*)::int FROM grants WHERE user_id=$1 AND desired AND fulfillment='active' AND (expires_at IS NULL OR expires_at>now())) AS "activeGrants",
+        (SELECT count(*)::int FROM devices WHERE user_id=$1 AND lost_at IS NULL) AS "devices",
+        EXISTS(SELECT 1 FROM identity_links WHERE user_id=$1 AND provider='netbird') AS "netbirdLinked",
+        (SELECT count(*)::int FROM notifications WHERE user_id=$1 AND read_at IS NULL) AS "unreadUpdates",
+        (SELECT count(*)::int FROM incidents WHERE state<>'resolved') AS "openIncidents"`,
+      [r.actor.id],
+    );
+    return {
+      ...r.actor,
+      sessionId: undefined,
+      authenticatedAt: undefined,
+      development: config.NODE_ENV !== "production",
+      diagnostics,
+    };
+  });
   app.patch("/api/me", async (r) => {
     const d = z.object({ timezone: z.string() }).strict().parse(r.body);
     new Intl.DateTimeFormat("en", { timeZone: d.timezone });
@@ -215,6 +235,28 @@ export async function createApp(
       .type("application/x-rdp")
       .header("Content-Disposition", 'attachment; filename="connection.rdp"')
       .send(rdpFile(endpoint.host, endpoint.ports[0]));
+  });
+  app.get("/api/services/:id/waygate", async (r) => {
+    const card: any = await catalog.detail(r.actor, id(r));
+    invariant(card.metadata, "access_required", 403);
+    invariant(
+      card.metadata.provider === "wow-manager",
+      "provider_mismatch",
+      400,
+    );
+    invariant(clients.waygate, "provider_not_configured", 503);
+    const q = z
+      .object({
+        resource: z
+          .enum(["dashboard", "status", "players", "leaderboards", "modules"])
+          .default("dashboard"),
+      })
+      .parse(r.query);
+    if (q.resource === "status") return clients.waygate.status();
+    if (q.resource === "players") return clients.waygate.players();
+    if (q.resource === "leaderboards") return clients.waygate.leaderboards();
+    if (q.resource === "modules") return clients.waygate.modules();
+    return clients.waygate.dashboard();
   });
   app.get("/api/entitlements", async (r) =>
     (await access.list())
@@ -491,12 +533,17 @@ export async function createApp(
     serviceProviders(
       config.NODE_ENV === "production",
       config.ENABLE_MOCK_PROVIDERS === "true",
+      clients.waygate,
     ).map((p) => ({
       id: p.id,
       contractVersion: p.contractVersion,
       capabilities: p.capabilities,
       availability:
-        p.id === "wow-manager" ? "Awaiting API specification" : "configured",
+        p.id === "wow-manager"
+          ? clients.waygate?.isConfigured()
+            ? "configured (read-only telemetry; manual account fulfillment)"
+            : "Awaiting API specification"
+          : "configured",
       actions: p.actions.map((a) => ({
         id: a.id,
         permission: a.permission,
@@ -734,6 +781,29 @@ export async function createApp(
       })
       .parse(r.body);
     return admin.secret(r.actor, d.name, d.value);
+  });
+  app.get("/api/admin/waygate", async (r) => {
+    invariant(
+      r.actor.roles.some((role) => can(r.actor, "catalog.manage", role.scope)),
+      "forbidden",
+      403,
+    );
+    invariant(clients.waygate, "provider_not_configured", 503);
+    const q = z
+      .object({
+        resource: z
+          .enum(["dashboard", "status", "players", "leaderboards", "modules"])
+          .optional(),
+      })
+      .parse(r.query);
+    if (q.resource === "status") return clients.waygate.status();
+    if (q.resource === "players") return clients.waygate.players();
+    if (q.resource === "leaderboards") return clients.waygate.leaderboards();
+    if (q.resource === "modules") return clients.waygate.modules();
+    return redact({
+      diagnostics: await clients.waygate.diagnostics(),
+      dashboard: await clients.waygate.dashboard(),
+    });
   });
   app.get("/api/admin/pocket-id", async (r) => {
     requirePermission(r.actor, "identity.manage");

@@ -366,12 +366,13 @@ export function fieldsFor(url: string): FieldSpec[] {
         "tcp",
         "manual",
         "kuma",
+        "waygate",
         "incoming",
       ]),
-      num("intervalSeconds", "Interval (seconds)", 60, 30, 86400),
+      num("intervalSeconds", "Interval (seconds)", 60, 5, 86400),
       object("config", "Check settings", [
         f("url", "URL", "url", {
-          show: (r) => ["http", "kuma"].includes(r.kind),
+          show: (r) => ["http", "kuma", "waygate"].includes(r.kind),
         }),
         { ...text("host", "Host", 253), show: (r) => r.kind === "tcp" },
         {
@@ -388,7 +389,7 @@ export function fieldsFor(url: string): FieldSpec[] {
         },
         select("secretReference", "Stored secret", lookup("secrets"), {
           optional: true,
-          show: (r) => ["http", "kuma", "incoming"].includes(r.kind),
+          show: (r) => ["http", "kuma", "waygate", "incoming"].includes(r.kind),
         }),
         {
           ...text("vantage", "Observation location", 120),

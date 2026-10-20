@@ -142,10 +142,9 @@ export function registerFormOptions(
           { id: "manual", label: "Manual fulfillment" },
           {
             id: "wow-manager",
-            label: "WoW manager",
-            disabled: true,
-            reason:
-              "Awaiting API specification; existing bindings support manual attestation",
+            label: "WoW manager (Waygate)",
+            description:
+              "Waygate Management API v1 read-only telemetry; manual account attestation",
           },
           ...(config.NODE_ENV !== "production" &&
           config.ENABLE_MOCK_PROVIDERS === "true"

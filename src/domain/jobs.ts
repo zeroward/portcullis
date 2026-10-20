@@ -5,9 +5,11 @@ import { validGrant, effectiveBindings } from "./access.js";
 import { ProviderError } from "../providers/http.js";
 import type { PocketIdClient } from "../providers/pocket-id.js";
 import type { NetBirdClient } from "../providers/netbird.js";
+import type { WaygateClient } from "../providers/waygate.js";
 export interface IntegrationClients {
   pocket?: PocketIdClient;
   netbird?: NetBirdClient;
+  waygate?: WaygateClient;
   protectedPocketGroups?: string[];
 }
 export class Jobs {

@@ -497,11 +497,6 @@ function App() {
         <div className="login-orbit" aria-hidden="true">
           <Emblem />
         </div>
-        <div className="login-telemetry" aria-hidden="true">
-          <span>XBOX LIVE // SYSTEM LINK</span>
-          <span>NAT: OPEN</span>
-          <span>16 PLAYERS MAX</span>
-        </div>
         <p className="eyebrow">PRIVATE COMMUNITY / PRESS START</p>
         <h1>
           Your community.
@@ -605,13 +600,29 @@ function App() {
               {pages.find((p) => p.id === page)?.title ?? "Page not found"}
             </strong>
           </span>
-          <div className="header-telemetry">
-            <span className="telemetry-pill" aria-hidden="true">
-              NAT: OPEN
+          <div className="header-telemetry" aria-label="Portal diagnostics">
+            <span
+              className={`telemetry-pill ${user.diagnostics?.netbirdLinked ? "healthy" : "pending"}`}
+            >
+              NETBIRD: {user.diagnostics?.netbirdLinked ? "LINKED" : "UNLINKED"}
             </span>
-            <span className="telemetry-pill" aria-hidden="true">
-              PARTY: {admin ? "HOST" : "READY"}
+            <span className="telemetry-pill">
+              DEVICES: {user.diagnostics?.devices ?? 0}
             </span>
+            <span className="telemetry-pill">
+              GRANTS: {user.diagnostics?.activeGrants ?? 0}
+            </span>
+            {user.diagnostics?.openIncidents > 0 ? (
+              <span className="telemetry-pill down">
+                INCIDENTS: {user.diagnostics.openIncidents}
+              </span>
+            ) : (
+              <span
+                className={`telemetry-pill ${user.diagnostics?.unreadUpdates ? "pending" : ""}`}
+              >
+                UPDATES: {user.diagnostics?.unreadUpdates ?? 0}
+              </span>
+            )}
             <span className="header-label">PRIVATE COMMUNITY</span>
           </div>
         </header>
@@ -641,10 +652,7 @@ function App() {
           </ErrorBoundary>
         </main>
         <footer>
-          Portcullis{" "}
-          <span>
-            SYSTEM LINK // Built for a community, connected by NetBird.
-          </span>
+          Portcullis <span>Built for a community, connected by NetBird.</span>
         </footer>
       </div>
     </div>
@@ -915,10 +923,13 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
                 <p>Required client: {detail.metadata.requiredClient}</p>
               )}
               {detail.metadata.provider === "wow-manager" && (
-                <p className="banner">
-                  Game-account provisioning and server controls: Awaiting API
-                  specification. Staff can record manual fulfillment.
-                </p>
+                <>
+                  <p className="banner">
+                    Game-account provisioning and server controls: Awaiting API
+                    specification. Staff can record manual fulfillment.
+                  </p>
+                  <WaygateRealmPanel serviceId={detail.id} />
+                </>
               )}
             </>
           ) : (
@@ -2518,6 +2529,14 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
             rows={q.data ?? []}
             columns={["id", "availability", "capabilities"]}
           />
+          <AsyncButton
+            onClick={async () =>
+              setResult({ waygate: await api("/api/admin/waygate") })
+            }
+          >
+            Inspect Waygate realm dashboard
+          </AsyncButton>
+          {result?.waygate && <ReadableResult value={result.waygate} />}
           <p>
             Provider URLs, versions, capability overrides, trusted ingress and
             outbound destinations are configured by the operator in environment
@@ -2539,6 +2558,105 @@ function AdminSection({ tab, user }: { tab: string; user: Row }) {
         </>
       )}
     </>
+  );
+}
+function WaygateRealmPanel({ serviceId }: { serviceId: string }) {
+  const [snap, setSnap] = useState<Row | null>(null);
+  const [board, setBoard] = useState<
+    "playtime" | "kills" | "honor" | "arena" | "gold"
+  >("playtime");
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const res = await api(`/api/services/${serviceId}/waygate`);
+        if (!active) return;
+        setSnap(res);
+        const ttl = Math.max(5, Number(res?.cache_ttl_seconds ?? 20));
+        timer = setTimeout(() => void poll(), ttl * 1000);
+      } catch {
+        /* Waygate telemetry is optional when WAYGATE_URL is not configured. */
+      }
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [serviceId]);
+  if (!snap) return null;
+  const status = snap.data?.status;
+  const players: Row[] | null = snap.data?.players ?? null;
+  const leaderboards: Row | null = snap.data?.leaderboards ?? null;
+  const modules: Row[] | null = snap.data?.modules ?? null;
+  return (
+    <section className="panel" aria-label="Waygate realm telemetry">
+      <div className="row">
+        <h3>Realm telemetry (Waygate)</h3>
+        <div className="tags">
+          {status && <Pill value={status.realm_up ? "healthy" : "down"} />}
+          {snap.demo && <span>DEMO</span>}
+          {snap.partial && <span>PARTIAL</span>}
+        </div>
+      </div>
+      {snap.errors?.map((e: Row) => (
+        <p className="banner" key={e.section}>
+          {e.section}: {e.message} ({e.code})
+        </p>
+      ))}
+      {status && (
+        <ReadableResult
+          value={{
+            realmName: status.realm_name,
+            realmUp: status.realm_up,
+            coreName: status.core_name,
+            expansion: status.expansion,
+            worldVersion: status.world_version || "N/A",
+            endpoint: `${status.public_host}:${status.public_world_port} (auth ${status.public_auth_port})`,
+            population: `${status.population.humans} humans (${status.population.alliance} Alliance / ${status.population.horde} Horde, ${status.population.gms} GMs) · ${status.population.bots} bots · ${status.population.total} total`,
+          }}
+        />
+      )}
+      {players && (
+        <details className="panel" open={players.length > 0}>
+          <summary>Online roster ({players.length})</summary>
+          <DataTable
+            rows={players}
+            columns={["name", "level", "race", "class", "zone", "faction"]}
+          />
+        </details>
+      )}
+      {leaderboards && (
+        <details className="panel">
+          <summary>Leaderboards</summary>
+          <div className="tabs" aria-label="Waygate leaderboards">
+            {(["playtime", "kills", "honor", "arena", "gold"] as const).map(
+              (k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={board === k ? "selected" : ""}
+                  onClick={() => setBoard(k)}
+                >
+                  {k}
+                </button>
+              ),
+            )}
+          </div>
+          <DataTable
+            rows={leaderboards[board] ?? []}
+            columns={["rank", "name", "level", "class", "value"]}
+          />
+        </details>
+      )}
+      {modules && modules.length > 0 && (
+        <details className="panel">
+          <summary>Detected modules ({modules.length})</summary>
+          <DataTable rows={modules} columns={["id", "title"]} />
+        </details>
+      )}
+    </section>
   );
 }
 function AccessConfiguration() {

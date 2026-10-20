@@ -9,8 +9,12 @@ missing credentials, manual requirement, awaiting specification and success.
 
 ManualServiceProvider provides metadata and explicit attestation. MockServiceProvider
 is test/development only and cannot activate any persisted fulfillment through the
-worker. WowManagerProvider is registered but unavailable: "Awaiting API specification".
-Cards may contain real configured addresses/guides and generic health immediately.
+worker. WowManagerProvider implements read-only realm telemetry (`information`,
+`status`, `player-count`, `component-health`) against Waygate Management API v1
+(`src/providers/waygate.ts`), while administrative/account-provisioning capabilities
+remain awaiting a write API specification.
+Cards may contain real configured addresses/guides, Waygate realm telemetry and
+health immediately.
 There are no WoW live controls, game database access, shell commands or fabricated
 player counts. Manual game fulfillment/revocation must be separately attested and
 audited; unavailable required steps block the grant.

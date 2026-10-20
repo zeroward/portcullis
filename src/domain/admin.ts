@@ -70,6 +70,11 @@ export class Admin {
           version: this.config.NETBIRD_VERSION,
           liveVerified: false,
         },
+        waygate: {
+          configured: !!this.clients.waygate?.isConfigured(),
+          version: this.config.WAYGATE_VERSION,
+          liveVerified: false,
+        },
       },
     };
   }

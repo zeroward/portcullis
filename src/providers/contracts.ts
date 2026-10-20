@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { ProviderError } from "./http.js";
+import {
+  WaygateClient,
+  summarizeWaygateHealth,
+  type WaygateResource,
+} from "./waygate.js";
 export type Capability =
   | "information"
   | "status"
@@ -73,8 +78,8 @@ export interface ServiceProvider {
 export class ManualServiceProvider implements ServiceProvider {
   id = "manual";
   contractVersion = 1 as const;
-  configSchema = z.object({ instructions: z.string().default("") });
-  secretReferences = [];
+  configSchema: z.ZodType = z.object({ instructions: z.string().default("") });
+  secretReferences: string[] = [];
   capabilities: Capability[] = ["information"];
   actions: ServiceProvider["actions"] = [];
   timeoutMs = 1000;
@@ -98,15 +103,93 @@ export class ManualServiceProvider implements ServiceProvider {
 }
 export class WowManagerProvider extends ManualServiceProvider {
   override id = "wow-manager";
-  override capabilities: Capability[] = [];
+  override configSchema = z.object({
+    url: z.url().optional(),
+    resource: z
+      .enum(["dashboard", "status", "players", "leaderboards", "modules"])
+      .default("dashboard"),
+    instructions: z.string().default(""),
+  });
+  override secretReferences = ["MANAGEMENT_API_TOKEN"];
+  override capabilities: Capability[] = [
+    "information",
+    "status",
+    "player-count",
+    "component-health",
+  ];
+  override timeoutMs = 10000;
+  override retry = { attempts: 1, backoffMs: 1000 };
+  constructor(readonly client?: WaygateClient) {
+    super();
+  }
   override async operation(
-    _capability: Capability,
-    _input: unknown,
+    capability: Capability,
+    input: unknown,
   ): Promise<ProviderResult<unknown>> {
-    return {
-      state: "awaiting-specification",
-      reason: "Awaiting API specification",
-    };
+    if (!this.capabilities.includes(capability)) {
+      return {
+        state: "awaiting-specification",
+        reason: "Awaiting API specification",
+      };
+    }
+    const parsed = z
+      .object({
+        url: z.url().optional(),
+        token: z.string().optional(),
+        resource: z
+          .enum(["dashboard", "status", "players", "leaderboards", "modules"])
+          .optional(),
+      })
+      .passthrough()
+      .safeParse(input ?? {});
+    const client =
+      this.client ??
+      (parsed.success && parsed.data.url && parsed.data.token
+        ? new WaygateClient(parsed.data.url, parsed.data.token)
+        : undefined);
+    if (!client || !client.isConfigured()) {
+      return {
+        state: "missing-credentials",
+        reason:
+          "Configure WAYGATE_URL and MANAGEMENT_API_TOKEN (or WAYGATE_TOKEN) for Waygate Management API v1.",
+      };
+    }
+    if (capability === "status") {
+      return { state: "ok", value: await client.status() };
+    }
+    if (capability === "player-count") {
+      const snap = await client.dashboard();
+      return {
+        state: "ok",
+        value: {
+          generated_at: snap.generated_at,
+          cache_ttl_seconds: snap.cache_ttl_seconds,
+          demo: snap.demo,
+          partial: snap.partial,
+          population: snap.data.status?.population ?? null,
+          players: snap.data.players,
+          errors: snap.errors,
+        },
+      };
+    }
+    if (capability === "component-health") {
+      const snap = await client.dashboard();
+      return {
+        state: "ok",
+        value: summarizeWaygateHealth(snap),
+      };
+    }
+    const resource: WaygateResource =
+      (parsed.success ? parsed.data.resource : undefined) ?? "dashboard";
+    if (resource === "status")
+      return { state: "ok", value: await client.status() };
+    if (resource === "players")
+      return { state: "ok", value: await client.players() };
+    if (resource === "leaderboards")
+      return { state: "ok", value: await client.leaderboards() };
+    if (resource === "modules")
+      return { state: "ok", value: await client.modules() };
+    return { state: "ok", value: await client.dashboard() };
   }
 }
 export class MockServiceProvider extends ManualServiceProvider {
@@ -145,10 +228,14 @@ export class MockServiceProvider extends ManualServiceProvider {
       : { state: "unsupported", reason: "Mock capability unavailable" };
   }
 }
-export function serviceProviders(production: boolean, mocks = false) {
+export function serviceProviders(
+  production: boolean,
+  mocks = false,
+  waygate?: WaygateClient,
+) {
   return [
     new ManualServiceProvider(),
-    new WowManagerProvider(),
+    new WowManagerProvider(waygate),
     ...(mocks ? [new MockServiceProvider(production)] : []),
   ];
 }

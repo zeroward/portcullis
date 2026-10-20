@@ -10,6 +10,12 @@ import { invariant } from "./errors.js";
 import { requirePermission, type Actor } from "./domain/authorization.js";
 import { audit, notify } from "./domain/audit.js";
 import { hasServiceAccess } from "./domain/authorization.js";
+import {
+  waygateDashboardResponse,
+  waygateStatusResponse,
+  waygateToken,
+  summarizeWaygateHealth,
+} from "./providers/waygate.js";
 export function allowedAddress(address: string, config: Config) {
   let ip = ipaddr.process(address);
   if (ip.kind() === "ipv6" && (ip as ipaddr.IPv6).isIPv4MappedAddress())
@@ -64,6 +70,7 @@ export async function checkedHttp(
   urlString: string,
   config: Config,
   headers: Record<string, string> = {},
+  timeout = 5000,
 ) {
   const url = new URL(urlString);
   invariant(
@@ -84,7 +91,7 @@ export async function checkedHttp(
       {
         headers,
         lookup: (_h, _o, cb) => cb(null, resolved.address, resolved.family),
-        timeout: 5000,
+        timeout,
       },
       (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400) {
@@ -139,11 +146,67 @@ export function parseKuma(body: string, name: string) {
           ? "degraded"
           : "unknown";
 }
+export function parseWaygate(body: string): {
+  state: "healthy" | "degraded" | "down" | "unknown";
+  detail: Record<string, unknown>;
+} {
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return { state: "unknown", detail: { error: "invalid_waygate_json" } };
+  }
+  const dash = waygateDashboardResponse.safeParse(json);
+  if (dash.success) {
+    const summary = summarizeWaygateHealth(dash.data);
+    return {
+      state: summary.state,
+      detail: {
+        realmName: summary.realmName,
+        realmUp: summary.realmUp,
+        coreName: summary.coreName,
+        expansion: summary.expansion,
+        worldVersion: summary.worldVersion,
+        population: summary.population,
+        onlinePlayers: summary.onlinePlayers,
+        detectedModules: summary.detectedModules,
+        demo: summary.demo,
+        partial: summary.partial,
+        cacheTtlSeconds: summary.cacheTtlSeconds,
+        generatedAt: summary.generatedAt,
+        errors: summary.errors.map((e) => ({
+          section: e.section,
+          code: e.code,
+        })),
+      },
+    };
+  }
+  const statusOnly = waygateStatusResponse.safeParse(json);
+  if (statusOnly.success) {
+    return {
+      state: statusOnly.data.data.realm_up ? "healthy" : "down",
+      detail: {
+        realmName: statusOnly.data.data.realm_name,
+        realmUp: statusOnly.data.data.realm_up,
+        coreName: statusOnly.data.data.core_name,
+        expansion: statusOnly.data.data.expansion,
+        worldVersion: statusOnly.data.data.world_version,
+        population: statusOnly.data.data.population,
+        demo: statusOnly.data.demo,
+        partial: false,
+        cacheTtlSeconds: statusOnly.data.cache_ttl_seconds,
+        generatedAt: statusOnly.data.generated_at,
+        errors: [],
+      },
+    };
+  }
+  return { state: "unknown", detail: { error: "invalid_waygate_contract" } };
+}
 export const checkInput = z
   .object({
     serviceId: z.uuid(),
-    kind: z.enum(["http", "tcp", "manual", "kuma", "incoming"]),
-    intervalSeconds: z.number().int().min(30).max(86400).default(60),
+    kind: z.enum(["http", "tcp", "manual", "kuma", "waygate", "incoming"]),
+    intervalSeconds: z.number().int().min(5).max(86400).default(60),
     config: z
       .object({
         url: z.url().optional(),
@@ -166,7 +229,10 @@ export class Monitoring {
   async save(actor: Actor, input: unknown) {
     const d = checkInput.parse(input);
     requirePermission(actor, "monitor.manage", d.serviceId);
-    if (["http", "kuma"].includes(d.kind)) {
+    if (d.kind === "waygate" && !d.config.url && this.config.WAYGATE_URL) {
+      d.config.url = this.config.WAYGATE_URL;
+    }
+    if (["http", "kuma", "waygate"].includes(d.kind)) {
       invariant(d.config.url, "url_required");
       const u = new URL(d.config.url);
       invariant(
@@ -221,6 +287,43 @@ export class Monitoring {
           r.status === 200
             ? parseKuma(r.body, c.config.monitorName)
             : "unknown";
+      }
+      if (c.kind === "waygate") {
+        const key = c.config.secretReference
+          ? await this.getSecret(c.config.secretReference)
+          : (this.config.WAYGATE_TOKEN ??
+            this.config.MANAGEMENT_API_TOKEN ??
+            "");
+        if (!waygateToken.safeParse(key).success) {
+          state = "unknown";
+          detail = { error: "missing_or_invalid_waygate_token" };
+        } else {
+          const base = String(c.config.url ?? this.config.WAYGATE_URL ?? "")
+            .split("?")[0]
+            .replace(/\/$/, "");
+          const targetUrl =
+            base.endsWith("/api/v1/dashboard") ||
+            base.endsWith("/api/v1/status")
+              ? base
+              : `${base}/api/v1/dashboard`;
+          const r = await checkedHttp(
+            targetUrl,
+            this.config,
+            {
+              Authorization: `Bearer ${key}`,
+              Accept: "application/json",
+            },
+            10000,
+          );
+          if (r.status === 200) {
+            const parsed = parseWaygate(r.body);
+            state = parsed.state;
+            detail = parsed.detail;
+          } else {
+            state = r.status === 503 ? "down" : "unknown";
+            detail = { status: r.status };
+          }
+        }
       }
       if (c.kind === "tcp") {
         const address = await resolveTarget(

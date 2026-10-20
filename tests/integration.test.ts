@@ -48,9 +48,11 @@ const env = {
   POCKET_ID_API_KEY: "pocket-fixture-key",
   NETBIRD_URL: "http://127.0.0.1:4200",
   NETBIRD_TOKEN: "netbird-fixture-token",
+  WAYGATE_URL: "http://127.0.0.1:4200",
+  MANAGEMENT_API_TOKEN: "waygate-fixture-token-0123456789abcdef",
   CAPABILITY_OVERRIDES: '{"netbird.networks":true,"pocket.enrollment":true}',
   MONITOR_ALLOWED_CIDRS: "127.0.0.1/32,192.168.10.0/24",
-  MONITOR_ALLOWED_PORTS: "4300,80,443",
+  MONITOR_ALLOWED_PORTS: "4200,4300,80,443",
   HEALTH_WEBHOOK_KEY: "h".repeat(32),
 };
 let owner: any;
@@ -327,7 +329,7 @@ describe("form lookup authorization and minimal projections", () => {
 });
 describe("OIDC and portal authorization", () => {
   it("migrates once on a clean real PostgreSQL database and seeds only explicitly", async () => {
-    expect((await db.query("SELECT * FROM schema_migrations")).length).toBe(2);
+    expect((await db.query("SELECT * FROM schema_migrations")).length).toBe(3);
     expect((await db.query("SHOW server_version"))[0].server_version).toMatch(
       /^18/,
     );
@@ -1544,6 +1546,62 @@ describe("network, health, notices and audit", () => {
       ).statusCode,
     ).toBe(200);
   });
+  it("integrates Waygate Management API v1 telemetry, partial errors, and health checks", async () => {
+    const [wow] = await db.query("SELECT id FROM services WHERE slug='wow'");
+    const dash = await call(member, `/api/services/${wow.id}/waygate`);
+    expect(dash.statusCode).toBe(200);
+    expect(dash.json().data.status.realm_name).toBe("Icecrown Citadel");
+    expect(dash.json().data.players).toHaveLength(2);
+    expect(
+      (await call(member, `/api/services/${wow.id}/waygate?resource=modules`))
+        .json()
+        .data.map((m: any) => m.id),
+    ).toContain("mod-aoe-loot");
+    expect((await call(member, "/api/admin/waygate")).statusCode).toBe(403);
+    const adminWaygate = await call(owner, "/api/admin/waygate");
+    expect(adminWaygate.statusCode).toBe(200);
+    expect(adminWaygate.json().diagnostics.state).toBe("healthy");
+
+    const check = await call(owner, "/api/health/checks", "POST", {
+      serviceId: wow.id,
+      kind: "waygate",
+      intervalSeconds: 20,
+      config: {
+        url: `${fixture.url}/api/v1/dashboard`,
+        vantage: "Waygate monitor",
+      },
+    });
+    expect(check.statusCode).toBe(200);
+    await system.monitoring.poll(check.json().id);
+    const [obs1] = await db.query(
+      "SELECT state,details FROM health_observations WHERE check_id=$1 ORDER BY observed_at DESC LIMIT 1",
+      [check.json().id],
+    );
+    expect(obs1.state).toBe("healthy");
+    expect(obs1.details.realmName).toBe("Icecrown Citadel");
+
+    fixture.state.waygate.unavailableSection = "players";
+    await system.monitoring.poll(check.json().id);
+    const [obs2] = await db.query(
+      "SELECT state,details FROM health_observations WHERE check_id=$1 ORDER BY observed_at DESC LIMIT 1",
+      [check.json().id],
+    );
+    expect(obs2.state).toBe("degraded");
+    expect(obs2.details.partial).toBe(true);
+    expect(
+      (await call(owner, "/api/admin/waygate?resource=players")).statusCode,
+    ).toBe(502);
+
+    fixture.state.waygate.unavailableSection = null;
+    fixture.state.waygate.realmUp = false;
+    await system.monitoring.poll(check.json().id);
+    const [obs3] = await db.query(
+      "SELECT state,details FROM health_observations WHERE check_id=$1 ORDER BY observed_at DESC LIMIT 1",
+      [check.json().id],
+    );
+    expect(obs3.state).toBe("down");
+    fixture.state.waygate.realmUp = true;
+  });
   it("backs up and restores a real PostgreSQL cluster and uploaded files", async () => {
     const counts = (
       await db.query(
@@ -1599,6 +1657,17 @@ describe("provider extension boundary", () => {
     expect(
       (await new WowManagerProvider().operation("restart", {})).state,
     ).toBe("awaiting-specification");
+    expect((await new WowManagerProvider().operation("status", {})).state).toBe(
+      "missing-credentials",
+    );
+    expect(
+      (
+        await new WowManagerProvider(system.clients.waygate).operation(
+          "player-count",
+          {},
+        )
+      ).state,
+    ).toBe("ok");
     expect(
       (await new ManualServiceProvider().operation("provision-account", {}))
         .state,

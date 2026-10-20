@@ -234,7 +234,7 @@ export function Modal({
     >
       <div className="dialog-head">
         <div>
-          <p className="eyebrow">PORTCULLIS // SYSTEM LINK TERMINAL</p>
+          <p className="eyebrow">PORTCULLIS / CONTROL PANEL</p>
           <h2 id={id}>{title}</h2>
         </div>
         <button type="button" onClick={dismiss} aria-label="Close dialog">
@@ -295,10 +295,6 @@ export function Navigation({
         <Brand />
       </a>
       <p className="eyebrow">YOUR COMMUNITY. CONNECTED.</p>
-      <div className="lobby-beacon" aria-hidden="true">
-        <span className="beacon-dot" />
-        <span>SYSTEM LINK // LIVE</span>
-      </div>
       <nav aria-label="Main navigation">
         {[...new Set(pages.map((p) => p.group))].map((group) => (
           <div className="nav-group" key={group}>

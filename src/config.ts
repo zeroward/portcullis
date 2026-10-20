@@ -23,6 +23,10 @@ const schema = z.object({
   NETBIRD_TOKEN: z.string().optional(),
   NETBIRD_VERSION: z.string().default("unverified"),
   NETBIRD_MANAGEMENT_URL: z.url().default("https://netbird.example.invalid"),
+  WAYGATE_URL: z.url().optional(),
+  WAYGATE_TOKEN: z.string().optional(),
+  MANAGEMENT_API_TOKEN: z.string().optional(),
+  WAYGATE_VERSION: z.string().default("1.0.0"),
   CAPABILITY_OVERRIDES: z.string().default("{}"),
   TRUSTED_PROXIES: z.string().default(""),
   UPLOAD_DIR: z.string().default("./uploads"),
@@ -77,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   for (const url of [
     c.POCKET_ID_URL,
     c.NETBIRD_URL,
+    c.WAYGATE_URL,
     c.DISCORD_WEBHOOK_URL,
     c.OUTGOING_WEBHOOK_URL,
   ]) {
@@ -87,6 +92,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         (c.NODE_ENV === "production" && new URL(url).protocol !== "https:"))
     )
       throw new Error("Invalid integration destination");
+  }
+  for (const token of [c.WAYGATE_TOKEN, c.MANAGEMENT_API_TOKEN]) {
+    if (token && !/^[\x21-\x7e]{32,}$/.test(token))
+      throw new Error(
+        "Waygate management token must contain at least 32 printable ASCII characters without spaces",
+      );
   }
   return c;
 }

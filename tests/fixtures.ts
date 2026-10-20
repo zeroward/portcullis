@@ -113,12 +113,133 @@ export async function providerFixture(port = 4200) {
         revoked: false,
       },
     ],
+    waygate: {
+      realmUp: true,
+      partial: false,
+      demo: false,
+      unavailableSection: null as
+        null | "status" | "players" | "leaderboards" | "modules",
+      status: {
+        realm_name: "Icecrown Citadel",
+        realm_up: true,
+        core_name: "AzerothCore",
+        expansion: "Wrath of the Lich King (3.3.5a)",
+        world_version: "ACDB 335.24081",
+        public_host: "realm.example.invalid",
+        public_auth_port: 3724,
+        public_world_port: 8085,
+        population: {
+          humans: 2,
+          bots: 4,
+          gms: 1,
+          total: 6,
+          alliance: 1,
+          horde: 1,
+        },
+      },
+      players: [
+        {
+          name: "Arthas",
+          level: 80,
+          race: "Human",
+          race_id: 1,
+          class: "Death Knight",
+          class_id: 6,
+          zone: "Icecrown",
+          faction: "Alliance",
+        },
+        {
+          name: "Thrall",
+          level: 80,
+          race: "Orc",
+          race_id: 2,
+          class: "Shaman",
+          class_id: 7,
+          zone: "Dalaran",
+          faction: "Horde",
+        },
+      ],
+      leaderboards: {
+        playtime: [
+          {
+            rank: 1,
+            name: "Arthas",
+            level: 80,
+            class: "Death Knight",
+            value: "14d 6h",
+            raw: 1231200,
+          },
+        ],
+        kills: [
+          {
+            rank: 1,
+            name: "Thrall",
+            level: 80,
+            class: "Shaman",
+            value: "1,420",
+            raw: 1420,
+          },
+        ],
+        honor: [
+          {
+            rank: 1,
+            name: "Thrall",
+            level: 80,
+            class: "Shaman",
+            value: "45,000",
+            raw: 45000,
+          },
+        ],
+        arena: [
+          {
+            rank: 1,
+            name: "Arthas",
+            level: 80,
+            class: "Death Knight",
+            value: "1,850",
+            raw: 1850,
+          },
+        ],
+        gold: [
+          {
+            rank: 1,
+            name: "Arthas",
+            level: 80,
+            class: "Death Knight",
+            value: "12,500g",
+            raw: 125000000,
+          },
+        ],
+      },
+      modules: [
+        { id: "mod-aoe-loot", title: "AoE Loot" },
+        { id: "mod-transmog", title: "Transmogrification" },
+      ],
+    },
     writes: [] as any[],
     failWrites: false,
     ambiguous: false,
     delayMs: 0,
   };
   app.addHook("onRequest", async (r, reply) => {
+    if (r.url.startsWith("/api/v1/")) {
+      reply.header("Cache-Control", "no-store");
+      if (
+        r.headers.authorization !==
+        "Bearer waygate-fixture-token-0123456789abcdef"
+      ) {
+        return reply
+          .header("WWW-Authenticate", 'Bearer realm="management"')
+          .code(401)
+          .send({
+            error: {
+              code: "unauthorized",
+              message: "Invalid or missing bearer token.",
+            },
+          });
+      }
+      return;
+    }
     const pocket = r.url.includes("user-groups") || r.headers["x-api-key"];
     if (
       pocket
@@ -289,6 +410,88 @@ export async function providerFixture(port = 4200) {
   app.get("/api/events", () => []);
   app.get("/api/dns/settings", () => ({ disabled_management_groups: [] }));
   app.get("/api/dns/nameservers", () => []);
+  const waygateEnvelope = (
+    data: unknown,
+    partial = false,
+    errors: any[] = [],
+  ) => ({
+    generated_at: "2026-10-01T12:00:00Z",
+    cache_ttl_seconds: 20,
+    demo: state.waygate.demo,
+    partial,
+    data,
+    errors,
+  });
+  app.get("/api/v1/dashboard", () => {
+    const failed = state.waygate.unavailableSection;
+    const status = {
+      ...state.waygate.status,
+      realm_up: state.waygate.realmUp,
+    };
+    const errors = failed
+      ? [
+          {
+            section: failed,
+            code: `${failed}_unavailable`,
+            message: "Requested data could not be collected.",
+          },
+        ]
+      : [];
+    return waygateEnvelope(
+      {
+        status: failed === "status" ? null : status,
+        players: failed === "players" ? null : state.waygate.players,
+        leaderboards:
+          failed === "leaderboards" ? null : state.waygate.leaderboards,
+        modules: failed === "modules" ? null : state.waygate.modules,
+      },
+      Boolean(failed) || state.waygate.partial,
+      errors,
+    );
+  });
+  app.get("/api/v1/status", (_r, reply) => {
+    if (state.waygate.unavailableSection === "status")
+      return reply.code(503).send({
+        error: {
+          code: "status_unavailable",
+          message: "Requested data could not be collected.",
+        },
+      });
+    return waygateEnvelope({
+      ...state.waygate.status,
+      realm_up: state.waygate.realmUp,
+    });
+  });
+  app.get("/api/v1/players", (_r, reply) => {
+    if (state.waygate.unavailableSection === "players")
+      return reply.code(503).send({
+        error: {
+          code: "players_unavailable",
+          message: "Requested data could not be collected.",
+        },
+      });
+    return waygateEnvelope(state.waygate.players);
+  });
+  app.get("/api/v1/leaderboards", (_r, reply) => {
+    if (state.waygate.unavailableSection === "leaderboards")
+      return reply.code(503).send({
+        error: {
+          code: "leaderboards_unavailable",
+          message: "Requested data could not be collected.",
+        },
+      });
+    return waygateEnvelope(state.waygate.leaderboards);
+  });
+  app.get("/api/v1/modules", (_r, reply) => {
+    if (state.waygate.unavailableSection === "modules")
+      return reply.code(503).send({
+        error: {
+          code: "modules_unavailable",
+          message: "Requested data could not be collected.",
+        },
+      });
+    return waygateEnvelope(state.waygate.modules);
+  });
   await app.listen({ port, host: "127.0.0.1" });
   return { app, state, url: `http://127.0.0.1:${port}` };
 }
