@@ -34,5 +34,15 @@ describe("foundation security", () => {
         ENABLE_MOCK_PROVIDERS: "true",
       }),
     ).toThrow();
+    const prodWithPrivateWaygate = loadConfig({
+      ...env,
+      ENCRYPTION_KEY: "a".repeat(64),
+      NODE_ENV: "production",
+      BASE_URL: "https://portal.example",
+      OIDC_ISSUER: "https://id.example",
+      WAYGATE_URL: "http://10.0.0.15:8080",
+      MANAGEMENT_API_TOKEN: "w".repeat(32),
+    });
+    expect(prodWithPrivateWaygate.WAYGATE_URL).toBe("http://10.0.0.15:8080");
   });
 });

@@ -45,8 +45,16 @@ export async function resolveTarget(
   port: number,
   config: Config,
 ) {
+  const waygateUrl = config.WAYGATE_URL ? new URL(config.WAYGATE_URL) : null;
+  const isWaygateOrigin =
+    waygateUrl !== null &&
+    waygateUrl.hostname.replace(/^\[|\]$/g, "").toLowerCase() ===
+      host.replace(/^\[|\]$/g, "").toLowerCase() &&
+    Number(waygateUrl.port || (waygateUrl.protocol === "https:" ? 443 : 80)) ===
+      port;
   invariant(
-    config.MONITOR_ALLOWED_PORTS.split(",").map(Number).includes(port),
+    isWaygateOrigin ||
+      config.MONITOR_ALLOWED_PORTS.split(",").map(Number).includes(port),
     "monitor_port_rejected",
   );
   const addresses = net.isIP(host)
@@ -59,6 +67,7 @@ export async function resolveTarget(
     addresses.length &&
       addresses.every(
         (a) =>
+          isWaygateOrigin ||
           allowedAddress(a.address, config) ||
           (domainApproved && ipaddr.process(a.address).range() === "unicast"),
       ),

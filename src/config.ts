@@ -23,7 +23,10 @@ const schema = z.object({
   NETBIRD_TOKEN: z.string().optional(),
   NETBIRD_VERSION: z.string().default("unverified"),
   NETBIRD_MANAGEMENT_URL: z.url().default("https://netbird.example.invalid"),
-  WAYGATE_URL: z.url().optional(),
+  WAYGATE_URL: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.url().optional(),
+  ),
   WAYGATE_TOKEN: z.string().optional(),
   MANAGEMENT_API_TOKEN: z.string().optional(),
   WAYGATE_VERSION: z.string().default("1.0.0"),
@@ -81,7 +84,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   for (const url of [
     c.POCKET_ID_URL,
     c.NETBIRD_URL,
-    c.WAYGATE_URL,
     c.DISCORD_WEBHOOK_URL,
     c.OUTGOING_WEBHOOK_URL,
   ]) {
@@ -93,6 +95,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     )
       throw new Error("Invalid integration destination");
   }
+  if (
+    c.WAYGATE_URL &&
+    (!["http:", "https:"].includes(new URL(c.WAYGATE_URL).protocol) ||
+      new URL(c.WAYGATE_URL).username ||
+      new URL(c.WAYGATE_URL).password)
+  )
+    throw new Error("Invalid integration destination");
   for (const token of [c.WAYGATE_TOKEN, c.MANAGEMENT_API_TOKEN]) {
     if (token && !/^[\x21-\x7e]{32,}$/.test(token))
       throw new Error(
