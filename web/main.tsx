@@ -804,6 +804,14 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
                 </button>
               </h2>
               <p>{s.summary}</p>
+              {s.source?.provider === "rawg" && (
+                <small>
+                  Data and images from{" "}
+                  <a href={s.source.url} target="_blank" rel="noreferrer">
+                    RAWG
+                  </a>
+                </small>
+              )}
               {s.incidents?.length > 0 && (
                 <p className="banner">
                   Active incident: {s.incidents[0].title}
@@ -838,6 +846,17 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
       {detail && (
         <Modal title={detail.name} close={() => setDetail(undefined)}>
           <p>{detail.summary}</p>
+          {detail.source?.provider === "rawg" && (
+            <p>
+              <small>
+                Data and images from{" "}
+                <a href={detail.source.url} target="_blank" rel="noreferrer">
+                  RAWG
+                </a>
+                .
+              </small>
+            </p>
+          )}
           <div className="detail-status">
             <span className="status-pair">
               <span>Health</span>

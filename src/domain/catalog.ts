@@ -52,6 +52,10 @@ export const serviceInput = z
         icon: url.optional(),
         cover: url.optional(),
         screenshots: z.array(url).max(6).default([]),
+        source: z
+          .object({ provider: z.literal("rawg"), url })
+          .strict()
+          .optional(),
         requiredClient: z.string().max(500).default(""),
         rules: z.string().max(10000).default(""),
         endpoints: z
@@ -132,6 +136,7 @@ export class Catalog {
       tags: s.metadata.tags ?? [],
       cover: s.metadata.cover,
       icon: s.metadata.icon,
+      source: s.metadata.source,
       favorite,
       health:
         access || admin

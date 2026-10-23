@@ -190,6 +190,14 @@ afterAll(async () => {
   await pg?.stop();
 });
 describe("form lookup authorization and minimal projections", () => {
+  it("protects the optional game metadata lookup", async () => {
+    expect(
+      (await call(member, "/api/game-metadata/search?q=portal")).statusCode,
+    ).toBe(403);
+    expect(
+      (await call(owner, "/api/game-metadata/search?q=portal")).statusCode,
+    ).toBe(503);
+  });
   it("limits lookups by permission and never returns stored secret values", async () => {
     for (const path of [
       "users?purpose=identity.manage",

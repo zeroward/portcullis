@@ -15,6 +15,7 @@ import { equal, signedBody, redact } from "./security.js";
 import { PocketIdClient } from "./providers/pocket-id.js";
 import { NetBirdClient, narrowPolicy } from "./providers/netbird.js";
 import { WaygateClient } from "./providers/waygate.js";
+import { RawgClient, type GameMetadataProvider } from "./providers/rawg.js";
 import { ProviderError } from "./providers/http.js";
 import { serviceProviders } from "./providers/contracts.js";
 import { Catalog, rdpFile } from "./domain/catalog.js";
@@ -69,10 +70,16 @@ export async function createApp(
     clients?: IntegrationClients;
     static?: boolean;
     logger?: boolean;
+    gameMetadata?: GameMetadataProvider;
   } = {},
 ) {
   const db = options.db ?? new Database(config.DATABASE_URL);
   const clients = options.clients ?? integrationClients(config);
+  const gameMetadata =
+    options.gameMetadata ??
+    (config.RAWG_API_KEY
+      ? new RawgClient(config.RAWG_API_KEY, config.RAWG_API_URL)
+      : undefined);
   const app = Fastify({
     logger:
       (options.logger ?? config.NODE_ENV !== "test")
@@ -201,6 +208,24 @@ export async function createApp(
     return { ok: true };
   });
   app.get("/api/services", (r) => catalog.cards(r.actor));
+  app.get("/api/game-metadata/search", async (r) => {
+    requirePermission(r.actor, "catalog.manage");
+    invariant(gameMetadata, "provider_not_configured", 503);
+    const { q } = z
+      .object({ q: z.string().trim().min(2).max(100) })
+      .strict()
+      .parse(r.query);
+    return gameMetadata.search(q);
+  });
+  app.get("/api/game-metadata/:id", async (r) => {
+    requirePermission(r.actor, "catalog.manage");
+    invariant(gameMetadata, "provider_not_configured", 503);
+    const gameId = z
+      .string()
+      .regex(/^\d{1,12}$/)
+      .parse((r.params as any).id);
+    return gameMetadata.game(gameId);
+  });
   app.get("/api/services/:id", (r) => catalog.detail(r.actor, id(r)));
   app.post("/api/services", (r) => catalog.save(r.actor, r.body));
   app.put("/api/services/:id", (r) => catalog.save(r.actor, r.body, id(r)));

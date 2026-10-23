@@ -631,6 +631,131 @@ interface Props {
   inheritedRoles?: Values[];
   channelPreferences?: Values[];
 }
+
+interface GameSearchResult {
+  id: string;
+  name: string;
+  released?: string;
+  image?: string;
+  platforms: string[];
+}
+
+interface GameMetadata {
+  name: string;
+  summary: string;
+  description: string;
+  category: string;
+  tags: string[];
+  cover?: string;
+  screenshots: string[];
+  source: { provider: "rawg"; url: string };
+}
+
+function GameMetadataLookup({
+  name,
+  apply,
+}: {
+  name: string;
+  apply: (game: GameMetadata) => void;
+}) {
+  const [query, setQuery] = useState(name),
+    [results, setResults] = useState<GameSearchResult[]>([]),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  async function search() {
+    if (query.trim().length < 2) {
+      setError("Enter at least two characters.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      setResults(
+        await api(`/api/game-metadata/search?q=${encodeURIComponent(query)}`),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function choose(id: string) {
+    setBusy(true);
+    setError("");
+    try {
+      apply(await api(`/api/game-metadata/${encodeURIComponent(id)}`));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <details className="game-lookup panel">
+      <summary>Look up game artwork and description</summary>
+      <p>
+        Search RAWG, then copy its presentation metadata into this draft.
+        Existing connection and access settings are left alone.
+      </p>
+      <div className="lookup-search">
+        <label>
+          Game title
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void search();
+              }
+            }}
+          />
+        </label>
+        <button type="button" disabled={busy} onClick={() => void search()}>
+          {busy ? "Working…" : "Search games"}
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="error">
+          {human(error)}
+        </p>
+      )}
+      {!!results.length && (
+        <div className="game-results" aria-label="Game search results">
+          {results.map((game) => (
+            <article key={game.id}>
+              {game.image && <img src={game.image} alt="" loading="lazy" />}
+              <div>
+                <strong>{game.name}</strong>
+                <small>
+                  {[game.released?.slice(0, 4), ...game.platforms]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </small>
+              </div>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void choose(game.id)}
+              >
+                Use metadata
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
+      <small>
+        Game data and images from{" "}
+        <a href="https://rawg.io" target="_blank" rel="noreferrer">
+          RAWG
+        </a>
+        .
+      </small>
+    </details>
+  );
+}
+
 export function StructuredForm({
   title,
   url,
@@ -794,6 +919,37 @@ export function StructuredForm({
       }}
     >
       <fieldset disabled={busy} className="form-body">
+        {/^\/api\/services(?:\/[^/]+)?$/.test(url) && (
+          <GameMetadataLookup
+            name={values.name ?? ""}
+            apply={(game) => {
+              setValues((previous) => ({
+                ...previous,
+                name: game.name,
+                slug:
+                  previous.slug ||
+                  game.name
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, "-")
+                    .replace(/^-|-$/g, "")
+                    .slice(0, 80),
+                summary: game.summary,
+                metadata: {
+                  ...previous.metadata,
+                  type: "game",
+                  category: game.category,
+                  tags: game.tags,
+                  description: game.description,
+                  cover: game.cover,
+                  screenshots: game.screenshots,
+                  source: game.source,
+                },
+              }));
+              setReview(undefined);
+              setResult(undefined);
+            }}
+          />
+        )}
         {[...new Set(presented.map((p) => p.group))].map((group) => (
           <details
             className="form-section"

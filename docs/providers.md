@@ -1,5 +1,17 @@
 # Provider extension contract
 
+## Game metadata
+
+Optional game artwork and description lookup uses the RAWG API and never sends its
+API key to the browser. Set `RAWG_API_KEY` to enable it; `RAWG_API_URL` defaults to
+the official API and exists for contract fixtures. Catalog-management permission is
+required for both lookup endpoints. Imported records retain a RAWG source URL, and
+the portal displays the required attribution beside cards and details that use the
+data or images. Operators remain responsible for complying with the selected RAWG
+plan and its usage limits.
+
+## Fulfillment providers
+
 `src/providers/contracts.ts` separates IdentityProvider, NetworkProvider,
 ServiceProvider, HealthProvider and NotificationProvider. Service contract v1
 defines capabilities as internal operations, not future external API endpoints.

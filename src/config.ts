@@ -30,6 +30,8 @@ const schema = z.object({
   WAYGATE_TOKEN: z.string().optional(),
   MANAGEMENT_API_TOKEN: z.string().optional(),
   WAYGATE_VERSION: z.string().default("1.0.0"),
+  RAWG_API_KEY: z.string().min(1).optional(),
+  RAWG_API_URL: z.url().default("https://api.rawg.io"),
   CAPABILITY_OVERRIDES: z.string().default("{}"),
   TRUSTED_PROXIES: z.string().default(""),
   UPLOAD_DIR: z.string().default("./uploads"),
@@ -86,6 +88,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     c.NETBIRD_URL,
     c.DISCORD_WEBHOOK_URL,
     c.OUTGOING_WEBHOOK_URL,
+    c.RAWG_API_URL,
   ]) {
     if (
       url &&

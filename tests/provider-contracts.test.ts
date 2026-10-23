@@ -4,8 +4,90 @@ import {
   WaygateClient,
   summarizeWaygateHealth,
 } from "../src/providers/waygate.js";
+import { RawgClient } from "../src/providers/rawg.js";
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("RAWG game metadata contracts", () => {
+  it("searches games and imports bounded artwork and descriptive metadata", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const path = new URL(url).pathname;
+      if (path === "/api/games")
+        return Promise.resolve(
+          Response.json({
+            results: [
+              {
+                id: 3498,
+                name: "Grand Theft Auto V",
+                released: "2013-09-17",
+                background_image: "https://images.example/game.jpg",
+                platforms: [{ platform: { name: "PC" } }],
+              },
+            ],
+          }),
+        );
+      if (path.endsWith("/screenshots"))
+        return Promise.resolve(
+          Response.json({
+            results: [{ image: "https://images.example/screenshot.jpg" }],
+          }),
+        );
+      return Promise.resolve(
+        Response.json({
+          id: 3498,
+          slug: "grand-theft-auto-v",
+          name: "Grand Theft Auto V",
+          description_raw: "A sprawling open-world game.",
+          background_image: "https://images.example/game.jpg",
+          website: "https://game.example",
+          genres: [{ name: "Action" }],
+          tags: [{ name: "Open World" }],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new RawgClient("test-key");
+    await expect(client.search("Grand Theft Auto")).resolves.toEqual([
+      {
+        id: "3498",
+        name: "Grand Theft Auto V",
+        released: "2013-09-17",
+        image: "https://images.example/game.jpg",
+        platforms: ["PC"],
+      },
+    ]);
+    await expect(client.game("3498")).resolves.toMatchObject({
+      name: "Grand Theft Auto V",
+      description: "A sprawling open-world game.",
+      category: "Action",
+      tags: ["Action", "Open World"],
+      screenshots: ["https://images.example/screenshot.jpg"],
+      source: {
+        provider: "rawg",
+        url: "https://rawg.io/games/grand-theft-auto-v",
+      },
+    });
+    expect(
+      fetchMock.mock.calls.every(([url]) => `${url}`.includes("key=test-key")),
+    ).toBe(true);
+  });
+
+  it("rejects malformed provider responses without returning their values", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(Response.json({ results: [{ id: "private" }] })),
+    );
+    await expect(
+      new RawgClient("test-key").search("game"),
+    ).rejects.toMatchObject({
+      code: "contract-mismatch",
+      provider: "rawg",
+      details: { reason: "invalid-response", fields: expect.any(Array) },
+    });
+  });
+});
 
 describe("NetBird response contracts", () => {
   it("normalizes only empty group collections, preserving populated entries", async () => {

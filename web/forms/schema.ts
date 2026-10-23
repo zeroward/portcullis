@@ -160,6 +160,14 @@ export const serviceFields: FieldSpec[] = [
       f("", "Image URL", "url", { max: 2048 }),
       6,
     ),
+    {
+      ...object("source", "Game metadata source", [
+        choice("provider", "Provider", ["rawg"]),
+        f("url", "Source URL", "url", { max: 2048 }),
+      ]),
+      optional: true,
+      show: (root) => !!root.metadata?.source,
+    },
     text("requiredClient", "Required client", 500, true),
     markdown("rules", "Rules (Markdown)", 10000, true),
     list(
@@ -436,7 +444,10 @@ export function defaults(fields: FieldSpec[], initial: Values = {}): Values {
   const result = { ...initial };
   for (const field of fields) {
     if (field.kind === "object")
-      result[field.key] = defaults(field.fields!, initial[field.key]);
+      result[field.key] =
+        field.optional && initial[field.key] === undefined
+          ? undefined
+          : defaults(field.fields!, initial[field.key]);
     else if (initial[field.key] === undefined)
       result[field.key] =
         field.default ??
@@ -459,7 +470,10 @@ export function payload(
     if (field.show && !field.show(root)) continue;
     let value = values[field.key];
     if (field.kind === "object")
-      value = payload(field.fields!, value ?? {}, root);
+      value =
+        field.optional && value === undefined
+          ? undefined
+          : payload(field.fields!, value ?? {}, root);
     else if (field.kind === "list")
       value = (value ?? []).map(
         (v: any) =>

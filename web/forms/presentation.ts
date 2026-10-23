@@ -20,6 +20,7 @@ export function presentFields(
         "metadata.icon",
         "metadata.cover",
         "metadata.screenshots",
+        "metadata.source",
         "metadata.sortOrder",
       ],
       Connections: [

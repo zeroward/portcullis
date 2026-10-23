@@ -168,6 +168,8 @@ Provider credentials stay server-side; there is no generic provider proxy.
 | POST | `/api/requests/:id/cancel` |
 | POST | `/api/requests/:id/decide` |
 | GET | `/api/services` |
+| GET | `/api/game-metadata/search?q=:title` |
+| GET | `/api/game-metadata/:providerId` |
 | POST | `/api/services` |
 | DELETE | `/api/services/:id` |
 | GET | `/api/services/:id` |
