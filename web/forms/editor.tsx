@@ -352,7 +352,7 @@ function LocalDate({
     </>
   );
 }
-interface FieldProps {
+export interface FieldProps {
   field: FieldSpec;
   value: any;
   root: Values;
@@ -362,7 +362,7 @@ interface FieldProps {
   labels: (options: Option[]) => void;
   errors: string[];
 }
-function EditorField({
+export function EditorField({
   field: f,
   value,
   root,
@@ -651,7 +651,7 @@ interface GameMetadata {
   source: { provider: "rawg"; url: string };
 }
 
-function GameMetadataLookup({
+export function GameMetadataLookup({
   name,
   apply,
 }: {

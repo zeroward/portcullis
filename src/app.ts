@@ -18,7 +18,7 @@ import { WaygateClient } from "./providers/waygate.js";
 import { RawgClient, type GameMetadataProvider } from "./providers/rawg.js";
 import { ProviderError } from "./providers/http.js";
 import { serviceProviders } from "./providers/contracts.js";
-import { Catalog, rdpFile } from "./domain/catalog.js";
+import { Catalog, rdpFile, serviceInput } from "./domain/catalog.js";
 import { Access } from "./domain/access.js";
 import { Tickets } from "./domain/tickets.js";
 import { Devices } from "./domain/devices.js";
@@ -26,7 +26,7 @@ import { Guides } from "./domain/guides.js";
 import { Files } from "./files.js";
 import { Notices } from "./domain/notices.js";
 import { Admin } from "./domain/admin.js";
-import { Monitoring } from "./monitoring.js";
+import { Monitoring, checkDefinitionInput } from "./monitoring.js";
 import {
   requirePermission,
   requireFresh,
@@ -208,6 +208,56 @@ export async function createApp(
     return { ok: true };
   });
   app.get("/api/services", (r) => catalog.cards(r.actor));
+  app.get("/api/service-setups/options", (r) => {
+    requirePermission(r.actor, "catalog.manage");
+    return {
+      gameMetadata: !!gameMetadata,
+      healthKinds: [
+        { id: "http", available: true },
+        { id: "tcp", available: true },
+        { id: "manual", available: true },
+        { id: "kuma", available: true },
+        {
+          id: "waygate",
+          available: !!clients.waygate?.isConfigured(),
+          reason: clients.waygate?.isConfigured()
+            ? undefined
+            : "Waygate URL and credentials are not configured",
+        },
+        {
+          id: "incoming",
+          available: !!config.HEALTH_WEBHOOK_KEY,
+          reason: config.HEALTH_WEBHOOK_KEY
+            ? undefined
+            : "Incoming health webhook is not configured",
+        },
+      ],
+    };
+  });
+  app.post("/api/service-setups", async (r) => {
+    requirePermission(r.actor, "catalog.manage");
+    const input = z
+      .object({
+        service: serviceInput,
+        healthCheck: checkDefinitionInput.nullable().default(null),
+      })
+      .strict()
+      .parse(r.body);
+    let prepared = null;
+    if (input.healthCheck) {
+      requirePermission(r.actor, "monitor.manage");
+      prepared = await monitoring.prepare(input.healthCheck);
+    }
+    const created = await catalog.createWith(
+      r.actor,
+      input.service,
+      async (tx, service) =>
+        prepared
+          ? monitoring.createPrepared(tx, r.actor, service.id, prepared)
+          : null,
+    );
+    return { service: created.service, healthCheck: created.result };
+  });
   app.get("/api/game-metadata/search", async (r) => {
     requirePermission(r.actor, "catalog.manage");
     invariant(gameMetadata, "provider_not_configured", 503);

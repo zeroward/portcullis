@@ -5,7 +5,7 @@ import net from "node:net";
 import ipaddr from "ipaddr.js";
 import { z } from "zod";
 import type { Config } from "./config.js";
-import type { Database } from "./db/index.js";
+import type { Database, Queryable } from "./db/index.js";
 import { invariant } from "./errors.js";
 import { requirePermission, type Actor } from "./domain/authorization.js";
 import { audit, notify } from "./domain/audit.js";
@@ -211,9 +211,8 @@ export function parseWaygate(body: string): {
   }
   return { state: "unknown", detail: { error: "invalid_waygate_contract" } };
 }
-export const checkInput = z
+export const checkDefinitionInput = z
   .object({
-    serviceId: z.uuid(),
     kind: z.enum(["http", "tcp", "manual", "kuma", "waygate", "incoming"]),
     intervalSeconds: z.number().int().min(5).max(86400).default(60),
     config: z
@@ -229,15 +228,16 @@ export const checkInput = z
       .strict(),
   })
   .strict();
+export const checkInput = checkDefinitionInput.extend({ serviceId: z.uuid() });
+export type CheckDefinition = z.infer<typeof checkDefinitionInput>;
 export class Monitoring {
   constructor(
     readonly db: Database,
     readonly config: Config,
     readonly getSecret: (id: string) => Promise<string>,
   ) {}
-  async save(actor: Actor, input: unknown) {
-    const d = checkInput.parse(input);
-    requirePermission(actor, "monitor.manage", d.serviceId);
+  async prepare(input: unknown): Promise<CheckDefinition> {
+    const d = checkDefinitionInput.parse(input);
     if (d.kind === "waygate" && !d.config.url && this.config.WAYGATE_URL) {
       d.config.url = this.config.WAYGATE_URL;
     }
@@ -258,12 +258,43 @@ export class Monitoring {
       invariant(d.config.host && d.config.port, "target_required");
       await resolveTarget(d.config.host, d.config.port, this.config);
     }
-    const [c] = await this.db.query(
+    if (d.kind === "kuma")
+      invariant(d.config.monitorName, "monitor_name_required");
+    if (d.kind === "waygate") {
+      const key = d.config.secretReference
+        ? await this.getSecret(d.config.secretReference)
+        : (this.config.WAYGATE_TOKEN ?? this.config.MANAGEMENT_API_TOKEN ?? "");
+      invariant(
+        waygateToken.safeParse(key).success,
+        "waygate_credentials_required",
+      );
+    }
+    if (d.kind === "incoming")
+      invariant(this.config.HEALTH_WEBHOOK_KEY, "webhook_disabled", 503);
+    return d;
+  }
+  async createPrepared(
+    db: Queryable,
+    actor: Actor,
+    serviceId: string,
+    d: CheckDefinition,
+  ) {
+    const [c] = await db.query(
       "INSERT INTO health_checks(service_id,kind,config,interval_seconds) VALUES ($1,$2,$3,$4) RETURNING *",
-      [d.serviceId, d.kind, JSON.stringify(d.config), d.intervalSeconds],
+      [serviceId, d.kind, JSON.stringify(d.config), d.intervalSeconds],
     );
-    await audit(this.db, actor.id, "monitor.create", c.id, { kind: d.kind });
+    await audit(db, actor.id, "monitor.create", c.id, { kind: d.kind });
     return c;
+  }
+  async save(actor: Actor, input: unknown) {
+    const parsed = checkInput.parse(input);
+    requirePermission(actor, "monitor.manage", parsed.serviceId);
+    const d = await this.prepare({
+      kind: parsed.kind,
+      intervalSeconds: parsed.intervalSeconds,
+      config: parsed.config,
+    });
+    return this.createPrepared(this.db, actor, parsed.serviceId, d);
   }
   async poll(id: string) {
     const [c] = await this.db.query(

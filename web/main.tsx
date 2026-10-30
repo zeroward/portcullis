@@ -15,7 +15,7 @@ import {
   useSfxMuted,
   type NavPage,
 } from "./ui.js";
-import { api, setCsrfToken } from "./api.js";
+import { api, ApiError, setCsrfToken } from "./api.js";
 import {
   ActionForm,
   StructuredForm,
@@ -23,10 +23,27 @@ import {
   LookupField,
   LookupStatusContext,
   DraftValuesContext,
+  EditorField,
+  GameMetadataLookup,
+  ResourceSelect,
 } from "./forms/editor.js";
+import {
+  defaults,
+  payload,
+  serviceFields,
+  validate,
+  type FieldSpec,
+  type Values,
+} from "./forms/schema.js";
 type Row = Record<string, any>;
 let csrf = "";
 const simpleDrafts = new Map<string, Record<string, string>>();
+interface ServiceSetupDraft {
+  step: number;
+  values: Values;
+  health: HealthDraft;
+}
+const serviceSetupDrafts = new Map<string, ServiceSetupDraft>();
 function useData<T = any>(url: string) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
@@ -682,8 +699,8 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
   const [detail, setDetail] = useState<Row>();
   const [request, setRequest] = useState<Row>();
   const [edit, setEdit] = useState<Row | null | undefined>();
-  const canManage = user.roles.some((r: Row) =>
-    ["owner", "service-admin"].includes(r.role),
+  const canCreate = user.roles.some(
+    (r: Row) => r.scope === "*" && ["owner", "service-admin"].includes(r.role),
   );
   const categories = [...new Set(query.data?.map((s) => s.category) ?? [])];
   const rows = (query.data ?? []).filter(
@@ -707,7 +724,7 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
             connected.
           </p>
         </div>
-        {canManage && (
+        {canCreate && (
           <button className="primary" onClick={() => setEdit(null)}>
             + Add service
           </button>
@@ -873,6 +890,23 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
             </p>
           ))}
           <small>{detail.health.meaning}</small>
+          {detail.canManage && (
+            <div className="monitor-summary">
+              {detail.health.observations.length === 0 ? (
+                <p>No health check configured.</p>
+              ) : (
+                detail.health.observations.map(
+                  (observation: Row, index: number) => (
+                    <p key={index}>
+                      {observation.observedAt
+                        ? `Last check: ${new Date(observation.observedAt).toLocaleString()} · ${observation.vantage ?? "Unknown location"} · ${observation.state}${new Date(observation.expiresAt) < new Date() ? " (stale)" : ""}`
+                        : "Waiting for the first health check. Ensure the worker is running."}
+                    </p>
+                  ),
+                )
+              )}
+            </div>
+          )}
           {detail.health.dependencyState && (
             <p>
               Direct checks: {detail.health.measuredState}. Dependencies:{" "}
@@ -1084,6 +1118,769 @@ function RequestForm({
     </Form>
   );
 }
+type HealthKind =
+  "none" | "http" | "tcp" | "manual" | "kuma" | "waygate" | "incoming";
+interface HealthDraft {
+  kind: HealthKind;
+  intervalSeconds: number;
+  url: string;
+  host: string;
+  port: number;
+  expectedStatus: number;
+  monitorName: string;
+  secretReference: string;
+  vantage: string;
+}
+interface HealthSuggestion {
+  id: string;
+  label: string;
+  kind: "http" | "tcp";
+  url?: string;
+  host?: string;
+  port?: number;
+}
+const blankHealth = (): HealthDraft => ({
+  kind: "none",
+  intervalSeconds: 60,
+  url: "",
+  host: "",
+  port: 443,
+  expectedStatus: 200,
+  monitorName: "",
+  secretReference: "",
+  vantage: "Portcullis worker",
+});
+const blankService = () =>
+  defaults(serviceFields, {
+    name: "",
+    slug: "",
+    summary: "",
+    visibility: "discoverable",
+    metadata: {},
+    entitlementIds: [],
+    dependencies: [],
+  });
+const setupSteps = [
+  "Identity & artwork",
+  "Connections & health",
+  "Access",
+  "Review & create",
+];
+const primaryPaths = [
+  ["metadata.type", "name", "slug", "summary", "metadata.category"],
+  [
+    "metadata.endpoints",
+    "metadata.requiredClient",
+    "metadata.instructions",
+    "metadata.links",
+  ],
+  ["visibility", "entitlementIds", "metadata.provider"],
+];
+const advancedPaths = [
+  [
+    "metadata.tags",
+    "metadata.description",
+    "metadata.icon",
+    "metadata.cover",
+    "metadata.screenshots",
+    "metadata.source",
+    "metadata.owner",
+    "metadata.version",
+    "metadata.environment",
+    "metadata.sortOrder",
+  ],
+  [],
+  ["metadata.rules", "dependencies"],
+];
+function fieldAt(path: string): FieldSpec {
+  const [parent, child] = path.split(".");
+  const field = serviceFields.find((candidate) => candidate.key === parent);
+  const result = child
+    ? field?.fields?.find((candidate) => candidate.key === child)
+    : field;
+  if (!result) throw new Error(`Unknown service field: ${path}`);
+  return result;
+}
+function valueAt(values: Values, path: string) {
+  return path.split(".").reduce((value, key) => value?.[key], values);
+}
+function setAt(values: Values, path: string, value: unknown) {
+  const next = structuredClone(values);
+  const keys = path.split(".");
+  const key = keys.pop()!;
+  const target = keys.reduce((object, part) => (object[part] ??= {}), next);
+  target[key] = value;
+  return next;
+}
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+
+function AddServiceWizard({ done }: { done: () => void }) {
+  const restored = serviceSetupDrafts.get("new");
+  const baseline = useRef(
+    JSON.stringify({ values: blankService(), health: blankHealth() }),
+  );
+  const [step, setStep] = useState(restored?.step ?? 0);
+  const [furthest, setFurthest] = useState(restored?.step ?? 0);
+  const [values, setValues] = useState<Values>(
+    () => restored?.values ?? blankService(),
+  );
+  const [health, setHealth] = useState<HealthDraft>(
+    () => restored?.health ?? blankHealth(),
+  );
+  const [errors, setErrors] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [blocked, setBlocked] = useState<Record<string, boolean>>({});
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [suggestion, setSuggestion] = useState("");
+  const form = useRef<HTMLFormElement>(null);
+  const options = useData<Row>("/api/service-setups/options");
+  const dirty = JSON.stringify({ values, health }) !== baseline.current;
+  const slugAutomatic = useRef(
+    !values.slug || values.slug === slugify(values.name),
+  );
+  useEffect(() => {
+    if (dirty) serviceSetupDrafts.set("new", { step, values, health });
+    else serviceSetupDrafts.delete("new");
+  }, [dirty, health, step, values]);
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirty) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
+  useEffect(() => {
+    if (!errors.length) return;
+    requestAnimationFrame(() => {
+      const invalid = form.current?.querySelector<HTMLElement>(
+        "[aria-invalid=true]",
+      );
+      invalid?.focus();
+    });
+  }, [errors, step]);
+  const change = (path: string, value: unknown) => {
+    setValues((current) => {
+      let next = setAt(current, path, value);
+      if (path === "name" && slugAutomatic.current)
+        next = setAt(next, "slug", slugify(String(value)));
+      if (path === "slug") slugAutomatic.current = false;
+      return next;
+    });
+    setErrors((current) =>
+      current.filter((item) => item !== path && !item.startsWith(`${path}.`)),
+    );
+    setError("");
+  };
+  const renderFields = (paths: string[]) =>
+    paths.map((path) => (
+      <EditorField
+        key={path}
+        field={fieldAt(path)}
+        value={valueAt(values, path)}
+        root={values}
+        path={path}
+        change={(value) => change(path, value)}
+        status={(key, ready) =>
+          setBlocked((current) => ({ ...current, [key]: !ready }))
+        }
+        labels={(choices) =>
+          setLabels((current) => ({
+            ...current,
+            ...Object.fromEntries(
+              choices.map((choice) => [choice.id, choice.label]),
+            ),
+          }))
+        }
+        errors={errors}
+      />
+    ));
+  const suggestions: HealthSuggestion[] = (
+    values.metadata?.endpoints ?? []
+  ).flatMap((endpoint: Row, index: number) => {
+    if (!endpoint.host || !endpoint.ports?.[0]) return [];
+    const label = endpoint.label || `Endpoint ${index + 1}`;
+    if (["http", "https"].includes(endpoint.protocol)) {
+      const port = endpoint.ports?.[0];
+      const standard =
+        (endpoint.protocol === "http" && port === 80) ||
+        (endpoint.protocol === "https" && port === 443);
+      const launch = String(endpoint.launch ?? "");
+      return [
+        {
+          id: String(index),
+          label: `${label} · HTTP`,
+          kind: "http" as const,
+          url: launch.startsWith("http")
+            ? launch
+            : `${endpoint.protocol}://${endpoint.host}${standard ? "" : `:${port}`}`,
+        },
+      ];
+    }
+    if (["tcp", "rdp"].includes(endpoint.protocol))
+      return [
+        {
+          id: String(index),
+          label: `${label} · TCP`,
+          kind: "tcp" as const,
+          host: endpoint.host,
+          port: endpoint.ports?.[0],
+        },
+      ];
+    return [];
+  });
+  const availability = Object.fromEntries(
+    (options.data?.healthKinds ?? []).map((kind: Row) => [kind.id, kind]),
+  );
+  const healthPayload = () => {
+    if (health.kind === "none") return null;
+    const config: Row = { vantage: health.vantage };
+    if (["http", "kuma", "waygate"].includes(health.kind) && health.url)
+      config.url = health.url;
+    if (health.kind === "http") config.expectedStatus = health.expectedStatus;
+    if (health.kind === "tcp") {
+      config.host = health.host;
+      config.port = health.port;
+    }
+    if (health.kind === "kuma") config.monitorName = health.monitorName;
+    if (["kuma", "waygate"].includes(health.kind) && health.secretReference)
+      config.secretReference = health.secretReference;
+    return {
+      kind: health.kind,
+      intervalSeconds: health.intervalSeconds,
+      config,
+    };
+  };
+  const customError = () => {
+    if (step === 0) {
+      if (values.name.trim().length < 2) return "Enter a service name.";
+      if (!/^[a-z0-9-]{2,80}$/.test(values.slug))
+        return "Enter a valid lowercase slug.";
+    }
+    if (step === 1) {
+      const incompleteEndpoint = (values.metadata?.endpoints ?? []).find(
+        (endpoint: Row) => !endpoint.host || !endpoint.ports?.length,
+      );
+      if (incompleteEndpoint)
+        return "Each endpoint needs a host and at least one port.";
+      if (
+        health.kind !== "none" &&
+        availability[health.kind]?.available === false
+      )
+        return availability[health.kind].reason;
+      if (health.kind === "http" && !health.url) return "Enter a health URL.";
+      if (health.kind === "tcp" && (!health.host || !health.port))
+        return "Enter a TCP host and port.";
+      if (health.kind === "kuma" && (!health.url || !health.monitorName))
+        return "Enter the Kuma URL and monitor name.";
+    }
+    if (
+      step === 2 &&
+      values.visibility === "entitled" &&
+      !values.entitlementIds?.length
+    )
+      return "Choose at least one required entitlement.";
+    return undefined;
+  };
+  const advance = () => {
+    const invalid = form.current?.querySelector<HTMLInputElement>(
+      "[aria-invalid=true], input:invalid, select:invalid, textarea:invalid",
+    );
+    if (invalid) {
+      invalid.focus();
+      invalid.reportValidity?.();
+      return;
+    }
+    const message = customError();
+    if (message) {
+      setError(message);
+      return;
+    }
+    setError("");
+    setStep((current) => {
+      const next = Math.min(current + 1, 3);
+      setFurthest((highest) => Math.max(highest, next));
+      return next;
+    });
+  };
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    setErrors([]);
+    try {
+      const service = payload(serviceFields, values);
+      const message = validate(service);
+      if (message) throw new Error(message);
+      await api("/api/service-setups", "POST", {
+        service,
+        healthCheck: healthPayload(),
+      });
+      serviceSetupDrafts.delete("new");
+      done();
+    } catch (e) {
+      if (e instanceof ApiError) {
+        const fields = e.fields.map((field) => field.replace(/^service\./, ""));
+        setErrors(fields);
+        if (
+          e.fields.some((field) => field.startsWith("healthCheck.")) ||
+          (!e.fields.length &&
+            health.kind !== "none" &&
+            /monitor|target|url|port|waygate|webhook/i.test(e.message))
+        )
+          setStep(1);
+        else if (/dependency|entitlement|visibility|provider/i.test(e.message))
+          setStep(2);
+        else if (
+          e.fields.some((field) =>
+            /^service\.metadata\.(endpoints|requiredClient|instructions|links)/.test(
+              field,
+            ),
+          )
+        )
+          setStep(1);
+        else if (
+          e.fields.some((field) =>
+            /^(service\.)?(visibility|entitlementIds|dependencies)/.test(field),
+          )
+        )
+          setStep(2);
+        else setStep(0);
+      }
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      ref={form}
+      className="service-wizard"
+      data-dirty={dirty}
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (step === 3) void submit();
+        else advance();
+      }}
+    >
+      <ol className="wizard-steps" aria-label="Add service progress">
+        {setupSteps.map((label, index) => (
+          <li key={label} className={index === step ? "current" : ""}>
+            <button
+              type="button"
+              disabled={index > furthest}
+              aria-current={index === step ? "step" : undefined}
+              onClick={() => setStep(index)}
+            >
+              <span>{index + 1}</span> {label}
+            </button>
+          </li>
+        ))}
+      </ol>
+      <fieldset disabled={busy} className="wizard-page">
+        {step === 0 && (
+          <section aria-labelledby="wizard-identity">
+            <h3 id="wizard-identity">What are you adding?</h3>
+            <p>
+              Start with the public identity. You can refine the details later.
+            </p>
+            {renderFields(primaryPaths[0])}
+            {values.metadata?.type === "game" && options.data?.gameMetadata && (
+              <GameMetadataLookup
+                name={values.name}
+                apply={(game) => {
+                  let next: Values = {
+                    ...values,
+                    name: game.name,
+                    summary: game.summary,
+                  };
+                  if (slugAutomatic.current)
+                    next = { ...next, slug: slugify(game.name) };
+                  next.metadata = {
+                    ...next.metadata,
+                    type: "game",
+                    category: game.category,
+                    tags: game.tags,
+                    description: game.description,
+                    cover: game.cover,
+                    screenshots: game.screenshots,
+                    source: game.source,
+                  };
+                  setValues(next);
+                }}
+              />
+            )}
+            <details className="wizard-advanced">
+              <summary>Artwork and advanced details</summary>
+              {renderFields(advancedPaths[0])}
+            </details>
+          </section>
+        )}
+        {step === 1 && (
+          <section aria-labelledby="wizard-connections">
+            <h3 id="wizard-connections">How do members connect?</h3>
+            <p>
+              Add connection information, then optionally monitor one target.
+            </p>
+            {renderFields(primaryPaths[1])}
+            <div className="health-builder panel">
+              <h4>Initial health check</h4>
+              <label>
+                Check type
+                <select
+                  value={health.kind}
+                  onChange={(event) =>
+                    setHealth((current) => ({
+                      ...current,
+                      kind: event.target.value as HealthKind,
+                    }))
+                  }
+                >
+                  <optgroup label="Common choices">
+                    <option value="none">No health check</option>
+                    <option value="http">HTTP</option>
+                    <option value="tcp">TCP</option>
+                  </optgroup>
+                  <optgroup label="Advanced choices">
+                    {(["manual", "kuma", "waygate", "incoming"] as const).map(
+                      (kind) => (
+                        <option
+                          key={kind}
+                          value={kind}
+                          disabled={availability[kind]?.available === false}
+                        >
+                          {kind === "kuma"
+                            ? "Uptime Kuma"
+                            : kind[0].toUpperCase() + kind.slice(1)}
+                        </option>
+                      ),
+                    )}
+                  </optgroup>
+                </select>
+              </label>
+              {(options.data?.healthKinds ?? [])
+                .filter((kind: Row) => !kind.available && kind.reason)
+                .map((kind: Row) => (
+                  <small className="muted" key={kind.id}>
+                    {kind.id === "waygate" ? "Waygate" : "Incoming"}:{" "}
+                    {kind.reason}
+                  </small>
+                ))}
+              {options.error && (
+                <State error={options.error} retry={options.refresh} />
+              )}
+              {!!suggestions.length && health.kind !== "none" && (
+                <div className="health-suggestion">
+                  <label>
+                    Suggest from endpoint
+                    <select
+                      value={suggestion}
+                      onChange={(event) => setSuggestion(event.target.value)}
+                    >
+                      <option value="">Choose an endpoint…</option>
+                      {suggestions.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!suggestion}
+                    onClick={() => {
+                      const selected = suggestions.find(
+                        (item) => item.id === suggestion,
+                      );
+                      if (!selected) return;
+                      setHealth((current) => ({
+                        ...current,
+                        kind: selected.kind,
+                        url: selected.url ?? current.url,
+                        host: selected.host ?? current.host,
+                        port: selected.port ?? current.port,
+                      }));
+                    }}
+                  >
+                    Use this endpoint
+                  </button>
+                </div>
+              )}
+              {health.kind === "none" ? (
+                <p className="muted">
+                  Health will remain unknown until a check is configured.
+                </p>
+              ) : (
+                <div className="health-fields">
+                  {["http", "kuma", "waygate"].includes(health.kind) && (
+                    <label>
+                      Health URL{health.kind === "waygate" ? " (optional)" : ""}
+                      <input
+                        type="url"
+                        required={health.kind !== "waygate"}
+                        value={health.url}
+                        onChange={(event) =>
+                          setHealth((current) => ({
+                            ...current,
+                            url: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  )}
+                  {health.kind === "http" && (
+                    <label>
+                      Expected HTTP status
+                      <input
+                        type="number"
+                        min={100}
+                        max={599}
+                        value={health.expectedStatus}
+                        onChange={(event) =>
+                          setHealth((current) => ({
+                            ...current,
+                            expectedStatus: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                  )}
+                  {health.kind === "tcp" && (
+                    <>
+                      <label>
+                        Host
+                        <input
+                          required
+                          maxLength={253}
+                          value={health.host}
+                          onChange={(event) =>
+                            setHealth((current) => ({
+                              ...current,
+                              host: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Port
+                        <input
+                          required
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={health.port}
+                          onChange={(event) =>
+                            setHealth((current) => ({
+                              ...current,
+                              port: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                    </>
+                  )}
+                  {health.kind === "kuma" && (
+                    <label>
+                      Monitor name
+                      <input
+                        required
+                        maxLength={200}
+                        value={health.monitorName}
+                        onChange={(event) =>
+                          setHealth((current) => ({
+                            ...current,
+                            monitorName: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  )}
+                  {["http", "tcp", "kuma", "waygate"].includes(health.kind) && (
+                    <label>
+                      Interval in seconds
+                      <input
+                        type="number"
+                        min={5}
+                        max={86400}
+                        value={health.intervalSeconds}
+                        onChange={(event) =>
+                          setHealth((current) => ({
+                            ...current,
+                            intervalSeconds: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                  )}
+                  {["kuma", "waygate"].includes(health.kind) && (
+                    <ResourceSelect
+                      source="/api/form-options/secrets"
+                      label="Stored secret"
+                      optional
+                      value={health.secretReference}
+                      onChange={(value) =>
+                        setHealth((current) => ({
+                          ...current,
+                          secretReference: value,
+                        }))
+                      }
+                      onReady={(ready) =>
+                        setBlocked((current) => ({
+                          ...current,
+                          healthSecret: !ready,
+                        }))
+                      }
+                      onOptions={(choices) =>
+                        setLabels((current) => ({
+                          ...current,
+                          ...Object.fromEntries(
+                            choices.map((choice) => [choice.id, choice.label]),
+                          ),
+                        }))
+                      }
+                    />
+                  )}
+                  <label>
+                    Observation location
+                    <input
+                      required
+                      maxLength={120}
+                      value={health.vantage}
+                      onChange={(event) =>
+                        setHealth((current) => ({
+                          ...current,
+                          vantage: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+        {step === 2 && (
+          <section aria-labelledby="wizard-access">
+            <h3 id="wizard-access">Who can discover and use it?</h3>
+            <p>Choose visibility and the fulfillment path for this service.</p>
+            {renderFields(primaryPaths[2])}
+            <details className="wizard-advanced">
+              <summary>Rules and dependencies</summary>
+              {renderFields(advancedPaths[2])}
+            </details>
+          </section>
+        )}
+        {step === 3 && (
+          <section aria-labelledby="wizard-review">
+            <h3 id="wizard-review">Review before creating</h3>
+            <div className="wizard-review-card">
+              {values.metadata?.cover && (
+                <img src={values.metadata.cover} alt="" />
+              )}
+              <div>
+                <small>{values.metadata?.category}</small>
+                <h4>{values.name || "Unnamed service"}</h4>
+                <p>{values.summary || "No card description."}</p>
+              </div>
+            </div>
+            <div className="wizard-review-grid">
+              <section>
+                <h4>Connections</h4>
+                <ReadableResult
+                  value={values.metadata?.endpoints ?? []}
+                  labels={labels}
+                />
+                <button type="button" onClick={() => setStep(1)}>
+                  Edit connections
+                </button>
+              </section>
+              <section>
+                <h4>Health</h4>
+                <ReadableResult
+                  value={
+                    health.kind === "none"
+                      ? "No initial health check"
+                      : healthPayload()
+                  }
+                  labels={labels}
+                />
+                <button type="button" onClick={() => setStep(1)}>
+                  Edit health
+                </button>
+              </section>
+              <section>
+                <h4>Access</h4>
+                <ReadableResult
+                  value={{
+                    visibility: values.visibility,
+                    entitlements: values.entitlementIds,
+                    provider: values.metadata?.provider,
+                    dependencies: values.dependencies,
+                  }}
+                  labels={labels}
+                />
+                <button type="button" onClick={() => setStep(2)}>
+                  Edit access
+                </button>
+              </section>
+            </div>
+            <p>
+              The service and its initial health check will be created together.
+            </p>
+          </section>
+        )}
+      </fieldset>
+      {error && (
+        <div className="error" role="alert">
+          {error.replaceAll("_", " ")}
+          {!!errors.length && <p>Check: {errors.join(", ")}.</p>}
+        </div>
+      )}
+      <div className="wizard-actions">
+        {step > 0 && (
+          <button type="button" onClick={() => setStep((value) => value - 1)}>
+            Back
+          </button>
+        )}
+        {dirty && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!window.confirm("Discard this service draft?")) return;
+              const nextValues = blankService();
+              const nextHealth = blankHealth();
+              setValues(nextValues);
+              setHealth(nextHealth);
+              setStep(0);
+              setFurthest(0);
+              setErrors([]);
+              setError("");
+              serviceSetupDrafts.delete("new");
+            }}
+          >
+            Discard draft
+          </button>
+        )}
+        <span />
+        <button
+          className="primary"
+          disabled={busy || Object.values(blocked).some(Boolean)}
+        >
+          {busy ? "Creating…" : step === 3 ? "Create service" : "Continue"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function ServiceEditor({
   service,
   done,
@@ -1091,34 +1888,33 @@ function ServiceEditor({
   service: Row | null;
   done: () => void;
 }) {
+  if (!service) return <AddServiceWizard done={done} />;
   return (
     <>
       <StructuredForm
         title="Save"
-        url={`/api/services${service ? `/${service.id}` : ""}`}
-        method={service ? "PUT" : "POST"}
+        url={`/api/services/${service.id}`}
+        method="PUT"
         initial={{
-          name: service?.name ?? "",
-          slug: service?.slug ?? "",
-          summary: service?.summary ?? "",
-          visibility: service?.visibility ?? "discoverable",
-          metadata: service?.metadata ?? {},
-          entitlementIds: service?.requirements?.map((e: Row) => e.id) ?? [],
-          dependencies: service?.dependencies ?? [],
-          version: service?.version,
+          name: service.name,
+          slug: service.slug,
+          summary: service.summary,
+          visibility: service.visibility,
+          metadata: service.metadata ?? {},
+          entitlementIds: service.requirements?.map((e: Row) => e.id) ?? [],
+          dependencies: service.dependencies ?? [],
+          version: service.version,
         }}
         done={done}
       />
-      {service && (
-        <ActionForm
-          title="Delete service"
-          url={`/api/services/${service.id}`}
-          method="DELETE"
-          fields={[]}
-          initial={{ confirmation: "DELETE" }}
-          done={done}
-        />
-      )}
+      <ActionForm
+        title="Delete service"
+        url={`/api/services/${service.id}`}
+        method="DELETE"
+        fields={[]}
+        initial={{ confirmation: "DELETE" }}
+        done={done}
+      />
     </>
   );
 }

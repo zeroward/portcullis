@@ -29,6 +29,9 @@ self-editing. Successful role writes return `{ok:true}`.
   access; protected endpoints/descriptions/links are omitted. Administrative links
   require scoped catalog.manage. Service writes require catalog.manage and an
   optimistic version on PUT. Entitled visibility requires entitlement mappings.
+  Guided creation posts `{service,healthCheck}` to `/api/service-setups`; the service,
+  optional initial check and their audit records commit atomically. Existing service
+  and health-check write contracts remain available independently.
 - Entitlement/bundle CRUD and direct grants require access.manage. Approvals require
   access.decide for every affected service; no-self-approval and distinct eligible
   approvers are evaluated again when deciding. Request bodies select one
@@ -164,6 +167,8 @@ Provider credentials stay server-side; there is no generic provider proxy.
 | GET | `/api/onboarding` |
 | POST | `/api/onboarding` |
 | GET | `/api/providers` |
+| GET | `/api/service-setups/options` |
+| POST | `/api/service-setups` |
 | POST | `/api/requests` |
 | POST | `/api/requests/:id/cancel` |
 | POST | `/api/requests/:id/decide` |

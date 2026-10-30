@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Database, Queryable } from "../db/index.js";
+import type { Database, Queryable, Transaction } from "../db/index.js";
 import {
   can,
   requirePermission,
@@ -190,6 +190,27 @@ export class Catalog {
   async save(actor: Actor, input: unknown, id?: string) {
     requirePermission(actor, "catalog.manage", id ?? "*");
     const data = serviceInput.parse(input);
+    return this.db.transaction((tx) => this.persist(tx, actor, data, id));
+  }
+  async createWith<T>(
+    actor: Actor,
+    input: unknown,
+    afterCreate: (tx: Transaction, service: any) => Promise<T>,
+  ) {
+    requirePermission(actor, "catalog.manage");
+    const data = serviceInput.parse(input);
+    return this.db.transaction(async (tx) => {
+      const service = await this.persist(tx, actor, data);
+      const result = await afterCreate(tx, service);
+      return { service, result };
+    });
+  }
+  private async persist(
+    tx: Transaction,
+    actor: Actor,
+    data: z.infer<typeof serviceInput>,
+    id?: string,
+  ) {
     invariant(
       data.visibility !== "entitled" || data.entitlementIds.length > 0,
       "entitled_visibility_requires_entitlements",
@@ -198,68 +219,66 @@ export class Catalog {
       !this.production || data.metadata.provider !== "mock",
       "mock_forbidden",
     );
-    return this.db.transaction(async (tx) => {
-      // Serialize graph edits so concurrent, individually valid edits cannot form a cycle.
-      await tx.query(
-        "SELECT pg_advisory_xact_lock(hashtext('service-dependencies'))",
+    // Serialize graph edits so concurrent, individually valid edits cannot form a cycle.
+    await tx.query(
+      "SELECT pg_advisory_xact_lock(hashtext('service-dependencies'))",
+    );
+    let row;
+    if (id) {
+      [row] = await tx.query(
+        "UPDATE services SET name=$1,slug=$2,summary=$3,visibility=$4,metadata=$5,version=version+1 WHERE id=$6 AND version=$7 RETURNING *",
+        [
+          data.name,
+          data.slug,
+          data.summary,
+          data.visibility,
+          JSON.stringify(data.metadata),
+          id,
+          data.version,
+        ],
       );
-      let row;
-      if (id) {
-        [row] = await tx.query(
-          "UPDATE services SET name=$1,slug=$2,summary=$3,visibility=$4,metadata=$5,version=version+1 WHERE id=$6 AND version=$7 RETURNING *",
-          [
-            data.name,
-            data.slug,
-            data.summary,
-            data.visibility,
-            JSON.stringify(data.metadata),
-            id,
-            data.version,
-          ],
-        );
-        invariant(row, "version_conflict", 409);
-      } else
-        [row] = await tx.query(
-          "INSERT INTO services(name,slug,summary,visibility,metadata) VALUES ($1,$2,$3,$4,$5) RETURNING *",
-          [
-            data.name,
-            data.slug,
-            data.summary,
-            data.visibility,
-            JSON.stringify(data.metadata),
-          ],
-        );
-      await tx.query("DELETE FROM service_entitlements WHERE service_id=$1", [
+      invariant(row, "version_conflict", 409);
+    } else
+      [row] = await tx.query(
+        "INSERT INTO services(name,slug,summary,visibility,metadata) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+        [
+          data.name,
+          data.slug,
+          data.summary,
+          data.visibility,
+          JSON.stringify(data.metadata),
+        ],
+      );
+    await tx.query("DELETE FROM service_entitlements WHERE service_id=$1", [
+      row.id,
+    ]);
+    for (const e of data.entitlementIds)
+      await tx.query("INSERT INTO service_entitlements VALUES ($1,$2)", [
         row.id,
+        e,
       ]);
-      for (const e of data.entitlementIds)
-        await tx.query("INSERT INTO service_entitlements VALUES ($1,$2)", [
-          row.id,
-          e,
-        ]);
-      await tx.query("DELETE FROM service_dependencies WHERE service_id=$1", [
+    await tx.query("DELETE FROM service_dependencies WHERE service_id=$1", [
+      row.id,
+    ]);
+    for (const d of data.dependencies)
+      await tx.query("INSERT INTO service_dependencies VALUES ($1,$2,$3)", [
         row.id,
+        d.id,
+        d.required,
       ]);
-      for (const d of data.dependencies)
-        await tx.query("INSERT INTO service_dependencies VALUES ($1,$2,$3)", [
-          row.id,
-          d.id,
-          d.required,
-        ]);
-      const cycle = await tx.query(
-        `WITH RECURSIVE walk(node,path,cycle) AS (SELECT dependency_id,ARRAY[service_id,dependency_id],service_id=dependency_id FROM service_dependencies WHERE service_id=$1 UNION ALL SELECT d.dependency_id,w.path||d.dependency_id,d.dependency_id=ANY(w.path) FROM walk w JOIN service_dependencies d ON d.service_id=w.node WHERE NOT w.cycle) SELECT 1 FROM walk WHERE cycle LIMIT 1`,
-        [row.id],
-      );
-      invariant(!cycle.length, "dependency_cycle");
-      await audit(
-        tx,
-        actor.id,
-        id ? "service.update" : "service.create",
-        row.id,
-        data,
-      );
-      return row;
-    });
+    const cycle = await tx.query(
+      `WITH RECURSIVE walk(node,path,cycle) AS (SELECT dependency_id,ARRAY[service_id,dependency_id],service_id=dependency_id FROM service_dependencies WHERE service_id=$1 UNION ALL SELECT d.dependency_id,w.path||d.dependency_id,d.dependency_id=ANY(w.path) FROM walk w JOIN service_dependencies d ON d.service_id=w.node WHERE NOT w.cycle) SELECT 1 FROM walk WHERE cycle LIMIT 1`,
+      [row.id],
+    );
+    invariant(!cycle.length, "dependency_cycle");
+    await audit(
+      tx,
+      actor.id,
+      id ? "service.update" : "service.create",
+      row.id,
+      data,
+    );
+    return row;
   }
   async remove(actor: Actor, id: string) {
     requirePermission(actor, "catalog.manage", id);

@@ -437,6 +437,118 @@ describe("OIDC and portal authorization", () => {
   });
 });
 describe("catalog, tickets, guides and files", () => {
+  it("atomically creates a service with its initial health check", async () => {
+    const body = {
+      service: {
+        name: "Atomic game service",
+        slug: "atomic-game-service",
+        summary: "Created with monitoring",
+        visibility: "discoverable",
+        metadata: {
+          type: "game",
+          endpoints: [
+            {
+              label: "Web status",
+              host: "127.0.0.1",
+              protocol: "http",
+              ports: [4300],
+              network: "lan",
+            },
+          ],
+        },
+      },
+      healthCheck: {
+        kind: "http",
+        intervalSeconds: 30,
+        config: {
+          url: "http://127.0.0.1:4300/health",
+          expectedStatus: 200,
+          vantage: "Atomic setup test",
+        },
+      },
+    };
+    expect(
+      (await call(member, "/api/service-setups", "POST", body)).statusCode,
+    ).toBe(403);
+    expect((await call(member, "/api/service-setups/options")).statusCode).toBe(
+      403,
+    );
+    const setupOptions = await call(owner, "/api/service-setups/options");
+    expect(setupOptions.statusCode).toBe(200);
+    expect(
+      setupOptions
+        .json()
+        .healthKinds.find((kind: any) => kind.id === "incoming").available,
+    ).toBe(true);
+    const response = await call(owner, "/api/service-setups", "POST", body);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().service.slug).toBe("atomic-game-service");
+    expect(response.json().healthCheck.service_id).toBe(
+      response.json().service.id,
+    );
+    expect(
+      await db.query(
+        "SELECT 1 FROM audit_events WHERE target IN ($1,$2) AND action IN ('service.create','monitor.create')",
+        [response.json().service.id, response.json().healthCheck.id],
+      ),
+    ).toHaveLength(2);
+
+    const invalid = await call(owner, "/api/service-setups", "POST", {
+      ...body,
+      service: {
+        ...body.service,
+        name: "Rejected atomic service",
+        slug: "rejected-atomic-service",
+      },
+      healthCheck: {
+        ...body.healthCheck,
+        config: {
+          ...body.healthCheck.config,
+          url: "http://169.254.169.254/metadata",
+        },
+      },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(
+      await db.query("SELECT 1 FROM services WHERE slug=$1", [
+        "rejected-atomic-service",
+      ]),
+    ).toHaveLength(0);
+
+    const relationshipFailure = await call(
+      owner,
+      "/api/service-setups",
+      "POST",
+      {
+        ...body,
+        service: {
+          ...body.service,
+          name: "Rolled back relationship service",
+          slug: "rolled-back-relationship-service",
+          dependencies: [
+            { id: "00000000-0000-4000-8000-000000000001", required: true },
+          ],
+        },
+      },
+    );
+    expect(relationshipFailure.statusCode).toBe(409);
+    expect(
+      await db.query("SELECT 1 FROM services WHERE slug=$1", [
+        "rolled-back-relationship-service",
+      ]),
+    ).toHaveLength(0);
+
+    const withoutCheck = await call(owner, "/api/service-setups", "POST", {
+      service: {
+        ...body.service,
+        name: "Unmonitored atomic service",
+        slug: "unmonitored-atomic-service",
+      },
+      healthCheck: null,
+    });
+    expect(withoutCheck.statusCode).toBe(200);
+    expect(withoutCheck.json().healthCheck).toBeNull();
+  });
   it("filters restricted fields before serialization and supports admin CRUD/favorites", async () => {
     const cards = (await call(member, "/api/services")).json();
     const wow = cards.find((c: any) => c.slug === "wow");

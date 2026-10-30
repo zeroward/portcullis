@@ -88,10 +88,25 @@ test("service draft dismissal, checkbox selections and hidden validation preserv
   await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue(
     "LAN draft",
   );
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "How do members connect?" }),
+  ).toBeVisible();
   await dialog
-    .locator("summary")
-    .filter({ hasText: /^Access & dependencies/ })
+    .getByRole("button", { name: "Add Endpoint", exact: true })
     .click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(dialog.getByLabel("Host", { exact: true })).toBeFocused();
+  await dialog.getByLabel("Host", { exact: true }).fill("lan.example.invalid");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Each endpoint needs a host and at least one port",
+  );
+  await dialog.getByRole("button", { name: "Add Port", exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "Who can discover and use it?" }),
+  ).toBeVisible();
   await dialog
     .getByRole("searchbox", { name: "Search Required entitlements" })
     .fill("Realm player");
@@ -105,62 +120,56 @@ test("service draft dismissal, checkbox selections and hidden validation preserv
   await expect(
     picker.getByRole("checkbox", { name: /Realm player/ }),
   ).not.toBeChecked();
-  await dialog
-    .locator("summary")
-    .filter({ hasText: /^Connections/ })
-    .click();
-  await dialog
-    .getByRole("button", { name: "Add Endpoint", exact: true })
-    .click();
-  await dialog
-    .locator("summary")
-    .filter({ hasText: /^Connections/ })
-    .click();
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(dialog.getByLabel("Host", { exact: true })).toBeFocused();
-  await dialog.getByLabel("Host", { exact: true }).fill("lan.example.invalid");
-  await dialog
-    .locator("summary")
-    .filter({ hasText: /^Connections/ })
-    .click();
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(
-    dialog.getByRole("group", { name: "Ports", exact: true }),
-  ).toBeFocused();
-  await dialog.getByRole("button", { name: "Add Port", exact: true }).click();
-  await dialog
-    .locator("summary")
-    .filter({ hasText: /^Connections/ })
-    .click();
-  await page.route("**/api/services", (route) =>
+    dialog.getByRole("heading", { name: "Review before creating" }),
+  ).toBeVisible();
+  await page.route("**/api/service-setups", (route) =>
     route.request().method() === "POST"
       ? route.fulfill({
           status: 400,
           json: {
             error: "validation_failed",
-            fields: ["metadata.endpoints.0.host"],
+            fields: ["service.metadata.endpoints.0.host"],
           },
         })
       : route.continue(),
   );
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Create service", exact: true })
+    .click();
   await expect(dialog.getByRole("alert")).toContainText("validation failed");
   await expect(dialog.getByLabel("Host", { exact: true })).toBeFocused();
-  await page.unroute("**/api/services");
-  await page.route("**/api/services", (route) =>
+  await page.unroute("**/api/service-setups");
+  await dialog
+    .getByLabel("Host", { exact: true })
+    .fill("lan-fixed.example.invalid");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.route("**/api/service-setups", (route) =>
     route.request().method() === "POST"
-      ? route.fulfill({ json: { id: "review-fixture", version: 1 } })
+      ? route.fulfill({
+          json: {
+            service: { id: "review-fixture", version: 1 },
+            healthCheck: null,
+          },
+        })
       : route.continue(),
   );
   const write = page.waitForRequest(
-    (r) => r.url().endsWith("/api/services") && r.method() === "POST",
+    (r) => r.url().endsWith("/api/service-setups") && r.method() === "POST",
   );
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Create service", exact: true })
+    .click();
   const body = (await write).postDataJSON();
-  expect(body.metadata.endpoints[0].host).toBe("lan.example.invalid");
-  expect(body.metadata.endpoints[0].ports).toEqual([443]);
-  expect(body.entitlementIds).toEqual([]);
-  expect(body).not.toHaveProperty("group");
+  expect(body.service.metadata.endpoints[0].host).toBe(
+    "lan-fixed.example.invalid",
+  );
+  expect(body.service.metadata.endpoints[0].ports).toEqual([443]);
+  expect(body.service.entitlementIds).toEqual([]);
+  expect(body.healthCheck).toBeNull();
+  expect(body.service).not.toHaveProperty("group");
   await expect(dialog).toHaveCount(0);
   await add.click();
   await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("");
