@@ -9,6 +9,10 @@ A self-hosted community gaming portal. Pocket ID handles sign-in and identity;
 NetBird handles network enforcement. Portcullis manages cards, requests, grants,
 tickets, onboarding, monitoring and audit.
 
+The default Games library groups servers under shared game artwork and descriptions.
+Add servers manually or import them from the configured Pterodactyl instance with
+ongoing connection synchronization. See [Games setup and upgrade](docs/games.md).
+
 Pocket ID and NetBird are real server-side API integrations. Automated tests call
 isolated HTTP services using upstream request contracts. Production integrations
 have **not** been verified against your installations. The WoW manager adapter is

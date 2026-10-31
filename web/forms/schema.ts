@@ -134,7 +134,7 @@ export const roleFields = [
 export const serviceFields: FieldSpec[] = [
   { ...name, min: 2 },
   f("slug", "Slug", "text", {
-    pattern: "[a-z0-9-]{2,80}",
+    pattern: "[a-z0-9\\-]{2,80}",
     help: "Lowercase letters, numbers and hyphens; 2–80 characters.",
   }),
   text("summary", "Card description", 240, true),
@@ -175,8 +175,15 @@ export const serviceFields: FieldSpec[] = [
       "Connection endpoints",
       object("", "Endpoint", [
         text("label", "Label", 100, true),
-        f("host", "Host", "text", { pattern: "[a-zA-Z0-9.:\\[\\]-]{1,253}" }),
-        choice("protocol", "Protocol", ["tcp", "udp", "https", "http", "rdp"]),
+        f("host", "Host", "text", { pattern: "[a-zA-Z0-9.:\\[\\]\\-]{1,253}" }),
+        choice("protocol", "Protocol", [
+          "tcp",
+          "udp",
+          "https",
+          "http",
+          "rdp",
+          "unknown",
+        ]),
         ports,
         choice("network", "Network access", ["public", "lan", "netbird"]),
         text("launch", "Application launch URL", 2048, true),
@@ -240,7 +247,7 @@ export function fieldsFor(url: string): FieldSpec[] {
   if (/\/api\/services(?:\/[^/]+)?$/.test(url)) return serviceFields;
   if (/\/api\/entitlements(?:\/[^/]+)?$/.test(url))
     return [
-      f("key", "Key", "text", { pattern: "[a-z][a-z0-9.-]{2,100}" }),
+      f("key", "Key", "text", { pattern: "[a-z][a-z0-9.\\-]{2,100}" }),
       { ...name, min: 2 },
       object("policy", "Request policy", [
         markdown("description", "Description (Markdown)", 2000, true),

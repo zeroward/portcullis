@@ -699,7 +699,7 @@ export function GameMetadataLookup({
       </p>
       <div className="lookup-search">
         <label>
-          Game title
+          Search game title
           <input
             type="search"
             value={query}

@@ -1,4 +1,308 @@
 @import "tailwindcss";
+/* The games library uses quiet surfaces so the artwork carries the identity. */
+.games-experience {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+body:has(.games-experience) {
+  background-image: none;
+}
+body:has(.games-experience)::before {
+  display: none;
+}
+body:has(.games-experience) .header-telemetry {
+  display: none;
+}
+.games-experience h1,
+.games-experience h2,
+.games-experience h3 {
+  overflow-wrap: anywhere;
+}
+.game-hero > *,
+.game-detail-layout > *,
+.game-setup-layout > * {
+  min-width: 0;
+}
+.games-experience h1 {
+  font-size: clamp(2rem, 4vw, 3.7rem);
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+}
+.games-experience h2,
+.games-experience h3 {
+  letter-spacing: -0.02em;
+}
+.games-experience button,
+.games-experience .button {
+  clip-path: none;
+  border-radius: 8px;
+}
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr));
+  gap: 24px;
+  margin-top: 28px;
+}
+.game-tile {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+.game-tile:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px #0003;
+}
+.games-experience .game-open {
+  padding: 0;
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  border-radius: 16px;
+}
+.game-art {
+  aspect-ratio: 16/9;
+  background: linear-gradient(130deg, var(--raised), var(--selected));
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.game-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.game-art > span {
+  font-size: 4rem;
+  font-weight: 700;
+  opacity: 0.35;
+  letter-spacing: -0.08em;
+}
+.game-tile-copy {
+  padding: 24px;
+}
+.game-tile-copy h2 {
+  margin: 0 0 8px;
+  font-size: 1.5rem;
+}
+.game-tile-copy p {
+  min-height: 2.6em;
+  color: var(--muted);
+  font-weight: 400;
+}
+.game-tile-copy > span,
+.game-tile-copy > small {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.games-experience .game-favorite {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: #101723dd;
+  color: #fff;
+  font-size: 1.3rem;
+  border: 1px solid #ffffff30;
+}
+.game-empty {
+  text-align: center;
+  padding: 72px 24px;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  margin-top: 24px;
+}
+.game-skeleton {
+  height: 310px;
+  border-radius: 16px;
+  background: var(--raised);
+}
+.game-hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 1fr;
+  gap: 40px;
+  align-items: center;
+  margin: 24px 0 48px;
+}
+.game-hero .game-art {
+  border-radius: 20px;
+}
+.game-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-top: 20px;
+}
+.game-detail-layout {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr;
+  gap: 48px;
+}
+.game-detail-layout aside {
+  padding: 24px;
+}
+.game-description,
+.server-instructions {
+  white-space: pre-wrap;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.server-row,
+.setup-panel {
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 16px 0;
+}
+.server-row-heading,
+.server-connection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.server-row-heading {
+  justify-content: space-between;
+}
+.server-connection code {
+  margin-right: auto;
+  overflow-wrap: anywhere;
+}
+.status-dot {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.status-dot::before {
+  content: "●";
+  margin-right: 6px;
+}
+.status-dot.healthy {
+  color: var(--success);
+}
+.status-dot.down {
+  color: var(--danger);
+}
+.setup-progress {
+  display: flex;
+  gap: 8px;
+  margin: 24px 0 32px;
+  flex-wrap: wrap;
+}
+.setup-progress button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+}
+.setup-progress button[aria-current] {
+  color: var(--text);
+  background: var(--raised);
+}
+.setup-progress span {
+  margin-right: 8px;
+}
+.game-setup-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(240px, 1fr);
+  gap: 40px;
+}
+.setup-preview {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+}
+.setup-preview .game-tile {
+  margin-bottom: 20px;
+}
+.game-setup form {
+  display: grid;
+  gap: 16px;
+}
+.game-setup label,
+.games-experience dialog label {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.game-setup input,
+.game-setup select,
+.game-setup textarea {
+  width: 100%;
+}
+.game-setup label.checkbox {
+  display: flex;
+  align-items: center;
+}
+.game-setup input[type="checkbox"] {
+  width: auto;
+}
+.source-options {
+  display: grid;
+  gap: 20px;
+}
+.source-options button {
+  padding: 32px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.source-options p {
+  font-weight: 400;
+  color: var(--muted);
+}
+.game-setup label.import-choice {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.import-choice small {
+  display: block;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.connection-fields {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+}
+.games-experience .text-button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  padding-left: 0;
+}
+@media (max-width: 850px) {
+  .game-hero,
+  .game-detail-layout,
+  .game-setup-layout {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .setup-preview {
+    position: static;
+    order: 2;
+  }
+  .game-detail-layout aside {
+    padding: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .game-tile {
+    transition: none;
+  }
+  .game-tile:hover {
+    transform: none;
+  }
+}
 :root {
   font-family:
     "Bahnschrift", "Rajdhani", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
@@ -2125,5 +2429,83 @@ dialog {
 
   .wizard-actions > span {
     display: none;
+  }
+}
+
+/* Library typography and surfaces take precedence over the legacy HUD theme. */
+.games-experience {
+  font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+}
+.games-experience aside {
+  height: auto;
+  min-height: 0;
+  border: 0;
+  box-shadow: none;
+  background: none;
+  overflow: visible;
+  display: block;
+}
+.games-experience .game-detail-layout aside {
+  position: static;
+}
+.games-experience h1 {
+  text-transform: none;
+  text-shadow: none;
+  font-size: clamp(2rem, 4vw, 3.7rem);
+}
+.games-experience h2,
+.games-experience h3 {
+  text-transform: none;
+  text-shadow: none;
+}
+.games-experience button,
+.games-experience .button {
+  text-transform: none;
+  letter-spacing: 0;
+  box-shadow: none;
+}
+.games-experience .page-heading {
+  border: 0;
+  padding-bottom: 8px;
+}
+.games-experience .page-heading::after {
+  display: none;
+}
+.games-experience .toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.games-experience .toolbar .search {
+  order: 2;
+  flex: 0 1 350px;
+}
+.games-experience .tabs {
+  order: 1;
+}
+.games-experience .tabs button.selected {
+  background: var(--raised);
+  border-color: var(--line);
+  box-shadow: none;
+}
+.game-tile-copy h2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.game-tile-copy p {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.games-experience :focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 4px;
+}
+@media (max-width: 600px) {
+  .games-experience .toolbar .search {
+    flex-basis: 100%;
   }
 }

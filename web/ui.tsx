@@ -288,7 +288,7 @@ export function Navigation({
           e.preventDefault();
           if (!allowNavigation()) return;
           playSfx("select");
-          navigate("services");
+          navigate("games");
           setOpen(false);
         }}
       >
@@ -335,7 +335,7 @@ export function Navigation({
             e.preventDefault();
             if (!allowNavigation()) return;
             playSfx("select");
-            navigate("services");
+            navigate("games");
           }}
         >
           <Brand />

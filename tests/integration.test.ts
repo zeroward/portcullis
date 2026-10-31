@@ -27,6 +27,10 @@ import {
 import { can } from "../src/domain/authorization.js";
 import { hash, signedBody } from "../src/security.js";
 import { Notifications } from "../src/notifications.js";
+import { randomUUID } from "node:crypto";
+import { Games } from "../src/domain/games.js";
+import { Catalog } from "../src/domain/catalog.js";
+import { PterodactylClient } from "../src/providers/pterodactyl.js";
 let pg: EmbeddedPostgres;
 let db: Database;
 let system: Awaited<ReturnType<typeof createApp>>;
@@ -67,6 +71,7 @@ let member: any;
 let support: any;
 let approver: any;
 let approver2: any;
+
 function cookies(r: any) {
   return r.cookies.map((c: any) => `${c.name}=${c.value}`).join("; ");
 }
@@ -344,7 +349,7 @@ describe("form lookup authorization and minimal projections", () => {
 });
 describe("OIDC and portal authorization", () => {
   it("migrates once on a clean real PostgreSQL database and seeds only explicitly", async () => {
-    expect((await db.query("SELECT * FROM schema_migrations")).length).toBe(4);
+    expect((await db.query("SELECT * FROM schema_migrations")).length).toBe(5);
     expect((await db.query("SHOW server_version"))[0].server_version).toMatch(
       /^18/,
     );
@@ -1937,6 +1942,256 @@ describe("network, health, notices and audit", () => {
     expect(obs3.state).toBe("down");
     fixture.state.waygate.realmUp = true;
   });
+});
+describe("games library", () => {
+  it("migrates populated game records without changing server IDs, favorites or health history", async () => {
+    await pg.createDatabase("games_upgrade");
+    const upgrade = new Database(
+      "postgres://test:test@127.0.0.1:55432/games_upgrade",
+    );
+    try {
+      for (const file of [
+        "0001_initial.sql",
+        "0002_decision_history.sql",
+        "0003_waygate_health.sql",
+        "0004_pterodactyl_health.sql",
+      ])
+        await upgrade.query(await readFile(`migrations/${file}`, "utf8"));
+      const [user] = await upgrade.query(
+        "INSERT INTO users(issuer,subject,name) VALUES ('test','test','Test') RETURNING id",
+      );
+      const [server] = await upgrade.query(
+        "INSERT INTO services(slug,name,summary,visibility,metadata) VALUES ('existing','Existing game','Existing summary','discoverable',$1) RETURNING id",
+        [
+          JSON.stringify({
+            type: "game",
+            cover: "https://example.com/cover.png",
+            description: "Existing description",
+          }),
+        ],
+      );
+      await upgrade.query("INSERT INTO favorites VALUES ($1,$2)", [
+        user.id,
+        server.id,
+      ]);
+      const [check] = await upgrade.query(
+        "INSERT INTO health_checks(service_id,kind,config) VALUES ($1,'manual','{}') RETURNING id",
+        [server.id],
+      );
+      await upgrade.query(
+        "INSERT INTO health_observations(check_id,state,source,vantage,expires_at) VALUES ($1,'healthy','manual','test',now()+interval '1 hour')",
+        [check.id],
+      );
+      await upgrade.query(await readFile("migrations/0005_games.sql", "utf8"));
+      expect(
+        (
+          await upgrade.query("SELECT game_id FROM services WHERE id=$1", [
+            server.id,
+          ])
+        )[0].game_id,
+      ).toBe(server.id);
+      expect(
+        (
+          await upgrade.query("SELECT presentation FROM games WHERE id=$1", [
+            server.id,
+          ])
+        )[0].presentation,
+      ).toMatchObject({
+        name: "Existing game",
+        description: "Existing description",
+        cover: "https://example.com/cover.png",
+      });
+      expect(await upgrade.query("SELECT * FROM game_favorites")).toEqual([
+        { user_id: user.id, game_id: server.id },
+      ]);
+      expect(
+        (
+          await upgrade.query(
+            "SELECT state FROM health_observations WHERE check_id=$1",
+            [check.id],
+          )
+        )[0].state,
+      ).toBe("healthy");
+    } finally {
+      await upgrade.close();
+    }
+  });
+  it("publishes grouped servers atomically, filters access, retries safely and moves without changing server IDs", async () => {
+    const body = {
+      submissionId: randomUUID(),
+      games: [{ key: "one", presentation: { name: "Shared game" } }],
+      servers: [
+        {
+          gameKey: "one",
+          name: "Open server",
+          connection: { host: "play.example.com", port: 25565 },
+          visibility: "discoverable",
+        },
+        {
+          gameKey: "one",
+          name: "Secret server",
+          connection: { host: "secret.example.com", port: 25566 },
+          visibility: "admin",
+        },
+      ],
+    };
+    const response = await call(owner, "/api/game-setups", "POST", body);
+    expect(response.statusCode).toBe(200);
+    const result = response.json();
+    expect(
+      (await call(owner, "/api/game-setups", "POST", body)).json(),
+    ).toEqual(result);
+    const adminGame = (
+      await call(owner, `/api/games/${result.gameIds[0]}`)
+    ).json();
+    expect(adminGame.servers).toHaveLength(2);
+    const memberGame = (
+      await call(member, `/api/games/${result.gameIds[0]}`)
+    ).json();
+    expect(memberGame.servers).toHaveLength(1);
+    expect(JSON.stringify(memberGame)).not.toContain("secret.example.com");
+    expect(
+      (await call(member, "/api/game-setups", "POST", body)).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await call(member, `/api/games/${result.gameIds[0]}/favorite`, "PUT", {
+          favorite: true,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (await call(member, `/api/games/${result.gameIds[0]}`)).json().favorite,
+    ).toBe(true);
+    const target = await call(owner, "/api/game-setups", "POST", {
+      ...body,
+      submissionId: randomUUID(),
+      games: [{ key: "one", presentation: { name: "Destination game" } }],
+      servers: [body.servers[0]],
+    });
+    const server = adminGame.servers[0];
+    expect(
+      (
+        await call(owner, `/api/game-servers/${server.id}/game`, "PUT", {
+          gameId: target.json().gameIds[0],
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect((await call(owner, `/api/services/${server.id}`)).statusCode).toBe(
+      200,
+    );
+    const before = (await db.query("SELECT count(*) FROM games"))[0].count;
+    const bad = await call(owner, "/api/game-setups", "POST", {
+      ...body,
+      submissionId: randomUUID(),
+      servers: [
+        body.servers[0],
+        { ...body.servers[1], visibility: "entitled" },
+      ],
+    });
+    expect(bad.statusCode).toBe(400);
+    expect((await db.query("SELECT count(*) FROM games"))[0].count).toBe(
+      before,
+    );
+  });
+  it("imports allocations, preserves overrides and presentation, handles disappearance and recovery", async () => {
+    const identifier = "games-test";
+    const source = {
+      ...fixture.state.pterodactyl.servers[0],
+      identifier,
+      name: "Import fixture",
+      relationships: {
+        allocations: {
+          data: [
+            {
+              object: "allocation",
+              attributes: {
+                id: 101,
+                ip: "192.168.10.8",
+                ip_alias: "original.example.com",
+                port: 25565,
+                is_default: true,
+              },
+            },
+          ],
+        },
+      },
+    };
+    fixture.state.pterodactyl.servers.push(source);
+    const body = {
+      submissionId: randomUUID(),
+      games: [{ key: "one", presentation: { name: "Curated title" } }],
+      servers: [
+        {
+          gameKey: "one",
+          name: "Custom nickname",
+          identifier,
+          visibility: "discoverable",
+        },
+      ],
+    };
+    const response = await call(owner, "/api/game-setups", "POST", body);
+    expect(response.statusCode).toBe(200);
+    const gameId = response.json().gameIds[0];
+    const game = (await call(owner, `/api/games/${gameId}`)).json();
+    const serverId = game.servers[0].id;
+    expect(game.servers[0].metadata.endpoints[0].host).toBe(
+      "original.example.com",
+    );
+    expect(
+      (
+        await call(owner, "/api/game-setups", "POST", {
+          ...body,
+          submissionId: randomUUID(),
+        })
+      ).statusCode,
+    ).toBe(409);
+    const games = new Games(
+      db,
+      new Catalog(db),
+      new PterodactylClient(env.PTERODACTYL_URL, env.PTERODACTYL_CLIENT_TOKEN),
+      env.PTERODACTYL_URL,
+      system.monitoring,
+    );
+    source.relationships.allocations.data[0].attributes.ip_alias =
+      "changed.example.com";
+    await games.sync();
+    expect(
+      (await call(owner, `/api/services/${serverId}`)).json().metadata
+        .endpoints[0].host,
+    ).toBe("changed.example.com");
+    expect(
+      (
+        await call(owner, `/api/game-servers/${serverId}/override`, "PUT", {
+          host: "players.example.com",
+          port: 25570,
+        })
+      ).statusCode,
+    ).toBe(200);
+    source.relationships.allocations.data[0].attributes.port = 25599;
+    await games.sync();
+    expect(
+      (await call(owner, `/api/services/${serverId}`)).json().metadata
+        .endpoints[0],
+    ).toMatchObject({ host: "players.example.com", ports: [25570] });
+    fixture.state.pterodactyl.servers =
+      fixture.state.pterodactyl.servers.filter(
+        (s) => s.identifier !== identifier,
+      );
+    await games.sync();
+    expect(
+      (await call(member, `/api/games/${gameId}`)).json().servers[0].sync.state,
+    ).toBe("unavailable");
+    fixture.state.pterodactyl.servers.push(source);
+    await games.sync();
+    const recovered = (await call(owner, `/api/games/${gameId}`)).json();
+    expect(recovered.name).toBe("Curated title");
+    expect(recovered.servers[0].name).toBe("Custom nickname");
+    expect(recovered.servers[0].sync.state).toBe("current");
+  });
+});
+
+describe("database restore", () => {
   it("backs up and restores a real PostgreSQL cluster and uploaded files", async () => {
     const counts = (
       await db.query(

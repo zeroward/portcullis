@@ -225,6 +225,22 @@ export async function providerFixture(port = 4200) {
           name: "Community Minecraft",
           node: "Gaming node",
           description: "Primary community game server",
+          relationships: {
+            allocations: {
+              data: [
+                {
+                  object: "allocation",
+                  attributes: {
+                    id: 1,
+                    ip: "192.168.10.5",
+                    ip_alias: "play.example.com",
+                    port: 25565,
+                    is_default: true,
+                  },
+                },
+              ],
+            },
+          },
         },
       ],
     },

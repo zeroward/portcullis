@@ -63,7 +63,14 @@ export const serviceInput = z
             z.object({
               label: z.string().max(100),
               host: z.string().regex(/^[a-zA-Z0-9.:\[\]-]{1,253}$/),
-              protocol: z.enum(["tcp", "udp", "https", "http", "rdp"]),
+              protocol: z.enum([
+                "tcp",
+                "udp",
+                "https",
+                "http",
+                "rdp",
+                "unknown",
+              ]),
               ports: z.array(z.number().int().min(1).max(65535)).min(1).max(16),
               network: z.enum(["public", "lan", "netbird"]),
               launch: launch.optional(),
@@ -190,6 +197,13 @@ export class Catalog {
   async save(actor: Actor, input: unknown, id?: string) {
     requirePermission(actor, "catalog.manage", id ?? "*");
     const data = serviceInput.parse(input);
+    if (id) {
+      const [linked] = await this.db.query(
+        "SELECT s.metadata->'endpoints' = $2::jsonb AS same FROM services s JOIN game_imports i ON i.service_id=s.id WHERE s.id=$1",
+        [id, JSON.stringify(data.metadata.endpoints)],
+      );
+      invariant(!linked || linked.same, "synced_connection_use_override", 409);
+    }
     return this.db.transaction((tx) => this.persist(tx, actor, data, id));
   }
   async createWith<T>(
@@ -205,11 +219,12 @@ export class Catalog {
       return { service, result };
     });
   }
-  private async persist(
+  async persist(
     tx: Transaction,
     actor: Actor,
     data: z.infer<typeof serviceInput>,
     id?: string,
+    gameId?: string,
   ) {
     invariant(
       data.visibility !== "entitled" || data.entitlementIds.length > 0,
@@ -240,13 +255,14 @@ export class Catalog {
       invariant(row, "version_conflict", 409);
     } else
       [row] = await tx.query(
-        "INSERT INTO services(name,slug,summary,visibility,metadata) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+        "INSERT INTO services(name,slug,summary,visibility,metadata,game_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
         [
           data.name,
           data.slug,
           data.summary,
           data.visibility,
           JSON.stringify(data.metadata),
+          gameId ?? null,
         ],
       );
     await tx.query("DELETE FROM service_entitlements WHERE service_id=$1", [

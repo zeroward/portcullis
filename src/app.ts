@@ -20,6 +20,7 @@ import { RawgClient, type GameMetadataProvider } from "./providers/rawg.js";
 import { ProviderError } from "./providers/http.js";
 import { serviceProviders } from "./providers/contracts.js";
 import { Catalog, rdpFile, serviceInput } from "./domain/catalog.js";
+import { Games } from "./domain/games.js";
 import { Access } from "./domain/access.js";
 import { Tickets } from "./domain/tickets.js";
 import { Devices } from "./domain/devices.js";
@@ -146,6 +147,40 @@ export async function createApp(
     clients.pterodactyl,
   );
   const id = (r: any) => z.uuid().parse(r.params.id);
+  const games = new Games(
+    db,
+    catalog,
+    clients.pterodactyl,
+    config.PTERODACTYL_URL ?? "",
+    monitoring,
+  );
+  app.get("/api/games", (r) => games.list(r.actor));
+  app.get("/api/games/:id", (r) => games.detail(r.actor, id(r)));
+  app.put("/api/games/:id", (r) => games.edit(r.actor, id(r), r.body));
+  app.put("/api/games/:id/favorite", (r) =>
+    games.favorite(
+      r.actor,
+      id(r),
+      z.object({ favorite: z.boolean() }).parse(r.body).favorite,
+    ),
+  );
+  app.post("/api/game-setups", (r) => games.publish(r.actor, r.body));
+  app.get("/api/game-imports", (r) => games.browse(r.actor));
+  app.post("/api/game-imports/refresh", async (r) => {
+    requirePermission(r.actor, "catalog.manage");
+    await games.sync();
+    return { ok: true };
+  });
+  app.put("/api/game-servers/:id/game", (r) =>
+    games.move(
+      r.actor,
+      id(r),
+      z.object({ gameId: z.uuid() }).parse(r.body).gameId,
+    ),
+  );
+  app.put("/api/game-servers/:id/override", (r) =>
+    games.override(r.actor, id(r), r.body),
+  );
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AppError)
       return reply

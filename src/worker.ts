@@ -7,6 +7,8 @@ import { Admin } from "./domain/admin.js";
 import { Monitoring } from "./monitoring.js";
 import { Notifications } from "./notifications.js";
 import { Devices } from "./domain/devices.js";
+import { Games } from "./domain/games.js";
+import { Catalog } from "./domain/catalog.js";
 const config = loadConfig();
 const db = new Database(config.DATABASE_URL);
 const clients = integrationClients(config);
@@ -21,6 +23,14 @@ const monitor = new Monitoring(
 const notifications = new Notifications(db, config);
 const devices = new Devices(db, config, clients.netbird);
 const worker = randomUUID();
+const games = new Games(
+  db,
+  new Catalog(db, config.NODE_ENV === "production"),
+  clients.pterodactyl,
+  config.PTERODACTYL_URL ?? "",
+  monitor,
+);
+let lastGameSync = 0;
 let stop = false;
 let lastSweep = 0;
 for (const s of ["SIGINT", "SIGTERM"] as const)
@@ -47,6 +57,14 @@ while (!stop) {
       await notifications.deliver(payload.notificationId);
     else throw new Error("unknown_job_kind");
   });
+  if (Date.now() - lastGameSync > 300000) {
+    lastGameSync = Date.now();
+    try {
+      await games.sync(false);
+    } catch {
+      console.error(JSON.stringify({ event: "game_sync_failed", worker }));
+    }
+  }
   if (!ran) await new Promise((r) => setTimeout(r, 1000));
 }
 await db.close();

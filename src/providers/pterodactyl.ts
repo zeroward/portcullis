@@ -8,6 +8,23 @@ const server = z.object({
     name: z.string().min(1).max(255),
     node: z.string().max(255).optional(),
     description: z.string().max(2000).optional(),
+    relationships: z
+      .object({
+        allocations: z.object({
+          data: z.array(
+            z.object({
+              attributes: z.object({
+                id: z.number().int(),
+                ip: z.string(),
+                ip_alias: z.string().nullable(),
+                port: z.number().int().min(1).max(65535),
+                is_default: z.boolean(),
+              }),
+            }),
+          ),
+        }),
+      })
+      .optional(),
   }),
 });
 const serverList = z.object({

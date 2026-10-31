@@ -24,6 +24,12 @@ export const users = pgTable(
   },
   (t) => [uniqueIndex("users_identity").on(t.issuer, t.subject)],
 );
+export const games = pgTable("games", {
+  id: uuid().primaryKey().defaultRandom(),
+  presentation: jsonb().notNull(),
+  version: integer().notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
 export const services = pgTable("services", {
   id: uuid().primaryKey().defaultRandom(),
   slug: text().notNull().unique(),
@@ -31,6 +37,7 @@ export const services = pgTable("services", {
   summary: text().notNull(),
   visibility: text().notNull(),
   metadata: jsonb().notNull(),
+  gameId: uuid("game_id").references(() => games.id),
   version: integer().notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });

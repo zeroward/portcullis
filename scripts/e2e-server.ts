@@ -44,6 +44,8 @@ const config = loadConfig({
   POCKET_ID_API_KEY: "pocket-fixture-key",
   NETBIRD_URL: fixture.url,
   NETBIRD_TOKEN: "netbird-fixture-token",
+  PTERODACTYL_URL: fixture.url,
+  PTERODACTYL_CLIENT_TOKEN: "pterodactyl-fixture-client-token",
   CAPABILITY_OVERRIDES: '{"netbird.networks":true,"pocket.enrollment":true}',
   UPLOAD_DIR: join(dir, "uploads"),
 });

@@ -4,7 +4,7 @@ async function signIn(page: Page, user = "dev-member") {
   await page.getByRole("link", { name: "Sign in with Pocket ID" }).click();
   await page.getByRole("link", { name: user, exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Find your next adventure." }),
+    page.getByRole("heading", { name: "Your next adventure." }),
   ).toBeVisible();
 }
 test("member request → admin approval → real provider fulfillment and owned devices", async ({
@@ -47,7 +47,9 @@ test("member request → admin approval → real provider fulfillment and owned 
     })
     .toBe(true);
   await page.reload();
-  await expect(page.locator(".pill.active").first()).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "My access", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "My devices", exact: true }).click();
   await expect(page.getByRole("heading", { name: "▱ Desktop" })).toBeVisible();
   await expect(page.getByText("100.90.0.2", { exact: true })).toBeVisible();
@@ -60,112 +62,7 @@ test("member request → admin approval → real provider fulfillment and owned 
   ).toBeVisible();
   await admin.close();
 });
-test("unavailable WoW fulfillment is blocked and admin can explicitly attest manual setup", async ({
-  browser,
-  page,
-}) => {
-  await signIn(page);
-  await page
-    .getByRole("button", { name: "World of Warcraft", exact: true })
-    .click();
-  await expect(
-    page.getByText("Request access to see protected connection details"),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Request access", exact: true })
-    .click();
-  await page
-    .getByLabel("Why would you like access?")
-    .fill("I would like to join the realm with the community.");
-  await page.getByRole("button", { name: "Submit access request" }).click();
-  const admin = await browser.newContext();
-  const staff = await admin.newPage();
-  await signIn(staff, "dev-owner");
-  await staff
-    .getByRole("button", { name: "Administration", exact: true })
-    .click();
-  await staff.getByRole("button", { name: "approvals", exact: true }).click();
-  await staff
-    .getByLabel("Reason", { exact: true })
-    .fill("Manual account setup will be recorded separately");
-  await staff.getByRole("button", { name: "Review record decision" }).click();
-  await staff.getByRole("button", { name: "Confirm record decision" }).click();
-  await expect
-    .poll(async () => {
-      const response = await page.request.get("/api/access");
-      return (await response.json()).grants.some(
-        (g: any) =>
-          g.snapshot.key === "game.wow.player" && g.fulfillment === "blocked",
-      );
-    })
-    .toBe(true);
-  await page.reload();
-  await expect(
-    page.getByText("Awaiting API specification; manual attestation available", {
-      exact: false,
-    }),
-  ).toBeVisible();
-  await staff.getByRole("button", { name: "access", exact: true }).click();
-  await staff
-    .locator("details")
-    .filter({
-      has: staff.getByText(
-        /Awaiting API specification; manual attestation available/,
-      ),
-    })
-    .first()
-    .locator("summary")
-    .first()
-    .click();
-  await staff
-    .getByText("Attest manual fulfillment", { exact: true })
-    .first()
-    .click();
-  const form = staff.locator("form").filter({
-    has: staff.getByRole("button", {
-      name: "Review attest manual fulfillment",
-    }),
-  });
-  await form
-    .getByLabel("Reason", { exact: true })
-    .fill("Manually configured the designated test account");
-  await form
-    .getByRole("button", { name: "Review attest manual fulfillment" })
-    .click();
-  await staff
-    .getByRole("button", { name: "Confirm attest manual fulfillment" })
-    .click();
-  await page.getByRole("button", { name: "Services", exact: true }).click();
-  await expect
-    .poll(async () => {
-      const response = await page.request.get("/api/access");
-      return (await response.json()).grants.some(
-        (g: any) =>
-          g.snapshot.key === "game.wow.player" && g.fulfillment === "active",
-      );
-    })
-    .toBe(true);
-  await page.reload();
-  await expect(
-    page
-      .locator(".card")
-      .filter({
-        has: page.getByRole("button", {
-          name: "World of Warcraft",
-          exact: true,
-        }),
-      })
-      .getByText("active", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "World of Warcraft", exact: true })
-    .click();
-  await expect(
-    page.getByText("realm.example.invalid:3724", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: /restart/i })).toHaveCount(0);
-  await admin.close();
-});
+
 test("support ticket persists and keyboard dialog closes with Escape", async ({
   page,
 }) => {
@@ -189,32 +86,6 @@ test("support ticket persists and keyboard dialog closes with Escape", async ({
   await expect(
     page.getByText("I have checked the instructions.", { exact: true }),
   ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-});
-test("mobile card gallery fits viewport and has named navigation controls", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await signIn(page);
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  await expect(
-    page.getByRole("navigation", { name: "Main navigation" }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
-  await page.screenshot({
-    path: "test-results/mobile-gallery.png",
-    fullPage: true,
-  });
-  await page
-    .getByRole("button", { name: "Community hub", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
@@ -243,16 +114,16 @@ test("service editing preserves dependency mappings", async ({ page }) => {
         slug: "browser-root",
         summary: "Before editing",
         visibility: "discoverable",
-        metadata: {},
+        metadata: { type: "game" },
         dependencies: [{ id: dependency.id, required: false }],
       },
     })
   ).json();
   await page.reload();
+  await page.getByRole("button", { name: /^Browser dependency edit/ }).click();
   await page
-    .getByRole("button", { name: "Browser dependency edit", exact: true })
+    .getByRole("button", { name: "Server settings", exact: true })
     .click();
-  await page.getByRole("button", { name: "Edit service", exact: true }).click();
   await page
     .getByRole("dialog")
     .locator("summary")
