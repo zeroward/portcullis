@@ -59,7 +59,7 @@ No production credentials or resource writes are needed. Ports 4100, 4200, 4300,
 `npm run build` is required before browser tests after frontend changes.
 `npm run format` applies the source formatter; `npm run check` checks formatting too.
 
-Latest local verification: 67 backend/payload tests and 24 Chromium workflows passed, plus
+Latest local verification: 79 backend/payload tests and 25 Chromium workflows passed, plus
 formatting, typecheck, lint and production build. See the persistent
 [checklist](docs/task-checklist.md) for evidence and outstanding deployment checks.
 
@@ -89,6 +89,11 @@ service metadata, dependencies, access policies, identity links, network resourc
 monitoring and notices. Markdown fields have rendered previews. Resource choices
 load when an editor opens and are filtered by permission; unavailable current
 references remain visible and are retained until explicitly changed.
+
+Guided game creation keeps monitoring focused: choose no monitoring, an endpoint-bound
+TCP probe, or a server from a configured Pterodactyl panel. Pterodactyl integration
+uses a read-only Client API token and reports lifecycle-aware health without exposing
+resource usage or control actions.
 
 Actions requiring confirmation show a review before applying. Network policy and
 resource previews are invalidated by edits. Role changes, offboarding, service

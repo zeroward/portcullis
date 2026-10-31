@@ -15,6 +15,7 @@ import { equal, signedBody, redact } from "./security.js";
 import { PocketIdClient } from "./providers/pocket-id.js";
 import { NetBirdClient, narrowPolicy } from "./providers/netbird.js";
 import { WaygateClient } from "./providers/waygate.js";
+import { PterodactylClient } from "./providers/pterodactyl.js";
 import { RawgClient, type GameMetadataProvider } from "./providers/rawg.js";
 import { ProviderError } from "./providers/http.js";
 import { serviceProviders } from "./providers/contracts.js";
@@ -54,6 +55,12 @@ export function integrationClients(config: Config): IntegrationClients {
           config.WAYGATE_URL,
           config.WAYGATE_TOKEN ?? config.MANAGEMENT_API_TOKEN ?? "",
           caps,
+        )
+      : undefined,
+    pterodactyl: config.PTERODACTYL_URL
+      ? new PterodactylClient(
+          config.PTERODACTYL_URL,
+          config.PTERODACTYL_CLIENT_TOKEN ?? "",
         )
       : undefined,
     protectedPocketGroups: Object.entries(
@@ -132,7 +139,12 @@ export async function createApp(
   const files = new Files(db, config, tickets, guides);
   const notices = new Notices(db);
   const admin = new Admin(db, config, clients);
-  const monitoring = new Monitoring(db, config, (id) => admin.getSecret(id));
+  const monitoring = new Monitoring(
+    db,
+    config,
+    (id) => admin.getSecret(id),
+    clients.pterodactyl,
+  );
   const id = (r: any) => z.uuid().parse(r.params.id);
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AppError)
@@ -215,6 +227,13 @@ export async function createApp(
       healthKinds: [
         { id: "http", available: true },
         { id: "tcp", available: true },
+        {
+          id: "pterodactyl",
+          available: !!clients.pterodactyl?.isConfigured(),
+          reason: clients.pterodactyl?.isConfigured()
+            ? undefined
+            : "Pterodactyl panel and Client API token are not configured",
+        },
         { id: "manual", available: true },
         { id: "kuma", available: true },
         {

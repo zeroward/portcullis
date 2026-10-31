@@ -12,7 +12,12 @@ const db = new Database(config.DATABASE_URL);
 const clients = integrationClients(config);
 const jobs = new Jobs(db, clients);
 const admin = new Admin(db, config, clients);
-const monitor = new Monitoring(db, config, (id) => admin.getSecret(id));
+const monitor = new Monitoring(
+  db,
+  config,
+  (id) => admin.getSecret(id),
+  clients.pterodactyl,
+);
 const notifications = new Notifications(db, config);
 const devices = new Devices(db, config, clients.netbird);
 const worker = randomUUID();

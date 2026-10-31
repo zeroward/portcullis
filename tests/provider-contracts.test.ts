@@ -5,8 +5,97 @@ import {
   summarizeWaygateHealth,
 } from "../src/providers/waygate.js";
 import { RawgClient } from "../src/providers/rawg.js";
+import {
+  PterodactylClient,
+  summarizePterodactylHealth,
+} from "../src/providers/pterodactyl.js";
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("Pterodactyl Client API contracts", () => {
+  it("lists accessible servers, follows pagination, and reads power state", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init: any) => {
+      expect(init.headers.Authorization).toBe("Bearer test-pterodactyl-token");
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith("/resources"))
+        return Promise.resolve(
+          Response.json({
+            object: "stats",
+            attributes: {
+              current_state: "running",
+              is_suspended: false,
+              resources: { memory_bytes: 123 },
+            },
+          }),
+        );
+      const page = Number(parsed.searchParams.get("page"));
+      return Promise.resolve(
+        Response.json({
+          object: "list",
+          data: [
+            {
+              object: "server",
+              attributes: {
+                identifier: `server-${page}`,
+                name: `Server ${page}`,
+                node: "Node",
+              },
+            },
+          ],
+          meta: { pagination: { current_page: page, total_pages: 2 } },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new PterodactylClient(
+      "https://panel.example",
+      "test-pterodactyl-token",
+    );
+    await expect(client.servers()).resolves.toHaveLength(2);
+    const snapshot = await client.resources("server-1");
+    expect(snapshot.attributes).toEqual({
+      current_state: "running",
+      is_suspended: false,
+    });
+    expect(summarizePterodactylHealth(snapshot)).toEqual({
+      state: "healthy",
+      detail: { powerState: "running", suspended: false },
+    });
+  });
+
+  it("maps lifecycle states and rejects malformed provider responses", async () => {
+    for (const [powerState, suspended, state] of [
+      ["starting", false, "degraded"],
+      ["stopping", false, "degraded"],
+      ["offline", false, "down"],
+      ["running", true, "down"],
+      ["future-state", false, "unknown"],
+    ] as const)
+      expect(
+        summarizePterodactylHealth({
+          object: "stats",
+          attributes: {
+            current_state: powerState,
+            is_suspended: suspended,
+          },
+        }).state,
+      ).toBe(state);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ object: "stats" })),
+    );
+    await expect(
+      new PterodactylClient(
+        "https://panel.example",
+        "test-pterodactyl-token",
+      ).resources("server"),
+    ).rejects.toMatchObject({
+      code: "contract-mismatch",
+      provider: "pterodactyl",
+      details: { reason: "invalid-response" },
+    });
+  });
+});
 
 describe("RAWG game metadata contracts", () => {
   it("searches games and imports bounded artwork and descriptive metadata", async () => {

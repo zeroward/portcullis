@@ -45,4 +45,33 @@ describe("foundation security", () => {
     });
     expect(prodWithPrivateWaygate.WAYGATE_URL).toBe("http://10.0.0.15:8080");
   });
+  it("requires a paired Pterodactyl Client API configuration and production HTTPS", () => {
+    expect(() =>
+      loadConfig({ ...env, PTERODACTYL_URL: "http://panel.example" }),
+    ).toThrow(/configured together/);
+    expect(() =>
+      loadConfig({
+        ...env,
+        PTERODACTYL_CLIENT_TOKEN: "pterodactyl-client-token",
+      }),
+    ).toThrow(/configured together/);
+    expect(() =>
+      loadConfig({
+        ...env,
+        ENCRYPTION_KEY: "a".repeat(64),
+        NODE_ENV: "production",
+        BASE_URL: "https://portal.example",
+        OIDC_ISSUER: "https://id.example",
+        PTERODACTYL_URL: "http://panel.example",
+        PTERODACTYL_CLIENT_TOKEN: "pterodactyl-client-token",
+      }),
+    ).toThrow(/Invalid integration destination/);
+    expect(
+      loadConfig({
+        ...env,
+        PTERODACTYL_URL: "http://127.0.0.1:4200",
+        PTERODACTYL_CLIENT_TOKEN: "pterodactyl-client-token",
+      }).PTERODACTYL_URL,
+    ).toBe("http://127.0.0.1:4200");
+  });
 });

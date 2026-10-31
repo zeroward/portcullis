@@ -16,6 +16,10 @@ import {
   waygateToken,
   summarizeWaygateHealth,
 } from "./providers/waygate.js";
+import {
+  PterodactylClient,
+  summarizePterodactylHealth,
+} from "./providers/pterodactyl.js";
 export function allowedAddress(address: string, config: Config) {
   let ip = ipaddr.process(address);
   if (ip.kind() === "ipv6" && (ip as ipaddr.IPv6).isIPv4MappedAddress())
@@ -108,6 +112,7 @@ export async function resolveTcpTarget(host: string, config: Config) {
 }
 
 type ServiceMetadata = {
+  type?: string;
   endpoints?: Array<{
     host?: string;
     protocol?: string;
@@ -271,15 +276,24 @@ export function parseWaygate(body: string): {
 }
 export const checkDefinitionInput = z
   .object({
-    kind: z.enum(["http", "tcp", "manual", "kuma", "waygate", "incoming"]),
+    kind: z.enum([
+      "http",
+      "tcp",
+      "manual",
+      "kuma",
+      "waygate",
+      "incoming",
+      "pterodactyl",
+    ]),
     intervalSeconds: z.number().int().min(5).max(86400).default(60),
     config: z
       .object({
         url: z.url().optional(),
         host: z.string().max(253).optional(),
         port: z.number().int().min(1).max(65535).optional(),
-        expectedStatus: z.number().int().min(100).max(599).default(200),
+        expectedStatus: z.number().int().min(100).max(599).optional(),
         monitorName: z.string().max(200).optional(),
+        serverIdentifier: z.string().min(1).max(64).optional(),
         secretReference: z.uuid().optional(),
         vantage: z.string().max(120).default("Portcullis worker"),
       })
@@ -293,6 +307,7 @@ export class Monitoring {
     readonly db: Database,
     readonly config: Config,
     readonly getSecret: (id: string) => Promise<string>,
+    readonly pterodactyl?: PterodactylClient,
   ) {}
   async prepare(
     input: unknown,
@@ -314,6 +329,7 @@ export class Monitoring {
         Number(u.port || (u.protocol === "https:" ? 443 : 80)),
         this.config,
       );
+      if (d.kind === "http") d.config.expectedStatus ??= 200;
     }
     if (d.kind === "tcp") {
       invariant(d.config.host && d.config.port, "target_required");
@@ -322,6 +338,14 @@ export class Monitoring {
         "tcp_target_must_match_service_endpoint",
       );
       await resolveTcpTarget(d.config.host, this.config);
+    }
+    if (d.kind === "pterodactyl") {
+      invariant(serviceMetadata?.type === "game", "game_service_required");
+      const pterodactyl = this.pterodactyl;
+      invariant(pterodactyl, "provider_not_configured", 503);
+      invariant(pterodactyl.isConfigured(), "provider_not_configured", 503);
+      invariant(d.config.serverIdentifier, "server_identifier_required");
+      await pterodactyl.resources(d.config.serverIdentifier);
     }
     if (d.kind === "kuma")
       invariant(d.config.monitorName, "monitor_name_required");
@@ -383,7 +407,8 @@ export class Monitoring {
     try {
       if (c.kind === "http") {
         const r = await checkedHttp(c.config.url, this.config);
-        state = r.status === c.config.expectedStatus ? "healthy" : "down";
+        state =
+          r.status === (c.config.expectedStatus ?? 200) ? "healthy" : "down";
         detail = { status: r.status };
       }
       if (c.kind === "kuma") {
@@ -464,6 +489,15 @@ export class Monitoring {
           socket.once("error", reject);
         });
         state = "healthy";
+      }
+      if (c.kind === "pterodactyl") {
+        const pterodactyl = this.pterodactyl;
+        invariant(pterodactyl, "provider_not_configured");
+        invariant(pterodactyl.isConfigured(), "provider_not_configured");
+        const snapshot = await pterodactyl.resources(c.config.serverIdentifier);
+        const summary = summarizePterodactylHealth(snapshot);
+        state = summary.state;
+        detail = summary.detail;
       }
     } catch (e) {
       state = [

@@ -6,10 +6,12 @@ import { ProviderError } from "../providers/http.js";
 import type { PocketIdClient } from "../providers/pocket-id.js";
 import type { NetBirdClient } from "../providers/netbird.js";
 import type { WaygateClient } from "../providers/waygate.js";
+import type { PterodactylClient } from "../providers/pterodactyl.js";
 export interface IntegrationClients {
   pocket?: PocketIdClient;
   netbird?: NetBirdClient;
   waygate?: WaygateClient;
+  pterodactyl?: PterodactylClient;
   protectedPocketGroups?: string[];
 }
 export class Jobs {

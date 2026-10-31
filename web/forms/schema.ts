@@ -376,6 +376,7 @@ export function fieldsFor(url: string): FieldSpec[] {
         "kuma",
         "waygate",
         "incoming",
+        "pterodactyl",
       ]),
       num("intervalSeconds", "Interval (seconds)", 60, 5, 86400),
       object("config", "Check settings", [
@@ -395,6 +396,12 @@ export function fieldsFor(url: string): FieldSpec[] {
           ...text("monitorName", "Monitor name", 200, true),
           show: (r) => r.kind === "kuma",
         },
+        select(
+          "serverIdentifier",
+          "Pterodactyl server",
+          lookup("pterodactyl-servers"),
+          { show: (r) => r.kind === "pterodactyl" },
+        ),
         select("secretReference", "Stored secret", lookup("secrets"), {
           optional: true,
           show: (r) => ["http", "kuma", "waygate", "incoming"].includes(r.kind),

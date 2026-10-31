@@ -124,7 +124,7 @@ export class Catalog {
         [actor.id, s.id],
       )
     ).length;
-    const state = await healthSummary(this.db, s.id);
+    const state = await healthSummary(this.db, s.id, admin);
     const base = {
       id: s.id,
       name: s.name,
@@ -288,9 +288,13 @@ export class Catalog {
     });
   }
 }
-export async function healthSummary(db: Queryable, id: string) {
+export async function healthSummary(
+  db: Queryable,
+  id: string,
+  includeDetails = false,
+) {
   const rows = await db.query(
-    `SELECT o.state,o.expires_at,o.observed_at,o.vantage,o.source FROM health_checks c LEFT JOIN LATERAL (SELECT * FROM health_observations WHERE check_id=c.id ORDER BY observed_at DESC LIMIT 1) o ON true WHERE c.service_id=$1 AND c.enabled`,
+    `SELECT o.state,o.expires_at,o.observed_at,o.vantage,o.source,o.details FROM health_checks c LEFT JOIN LATERAL (SELECT * FROM health_observations WHERE check_id=c.id ORDER BY observed_at DESC LIMIT 1) o ON true WHERE c.service_id=$1 AND c.enabled`,
     [id],
   );
   const states = rows.map((r) =>
@@ -345,6 +349,17 @@ export async function healthSummary(db: Queryable, id: string) {
       expiresAt: r.expires_at,
       vantage: r.vantage ?? null,
       source: r.source ?? null,
+      ...(includeDetails &&
+      r.source === "pterodactyl" &&
+      typeof r.details?.powerState === "string" &&
+      typeof r.details?.suspended === "boolean"
+        ? {
+            details: {
+              powerState: r.details.powerState,
+              suspended: r.details.suspended,
+            },
+          }
+        : {}),
     })),
     meaning: "Monitor reachability; not connectivity from your computer",
   };

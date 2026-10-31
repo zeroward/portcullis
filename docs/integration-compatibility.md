@@ -1,6 +1,6 @@
 # Integration compatibility research
 
-Research date: 2026-09-30. Deployment versions unknown; configured version and
+Research updated: 2026-10-30. Deployment versions unknown; configured version and
 capability overrides are required. Official documentation is a contract source,
 not proof a production instance supports every feature. Record exact schema
 revisions and test evidence below as implementation proceeds.
@@ -11,6 +11,7 @@ revisions and test evidence below as implementation proceeds.
 | Pocket ID allowed groups | https://pocket-id.org/docs/configuration/allowed-groups | operator | Configure OIDC client allowed groups explicitly |
 | NetBird | https://docs.netbird.io/api/resources/users and https://docs.netbird.io/api/resources/groups | Authorization: Token PAT | Explicit mappings; preserve full-replacement fields |
 | Kuma | https://github.com/louislam/uptime-kuma/wiki/Prometheus-Integration and https://github.com/louislam/uptime-kuma/wiki/Prometheus-API-Keys | metrics API key / documented Basic auth | Read-only /metrics, no Socket.IO management |
+| Pterodactyl | https://docs.pterodactyl.io/v1/api and https://docs.pterodactyl.io/v2/api | Client API bearer token | Read-only server listing and resource-status polling |
 | OIDC library | https://github.com/panva/openid-client | code + PKCE | Maintained library handles validation/crypto |
 
 Pocket ID OIDC client newly created with no allowed groups permits no users until
@@ -43,6 +44,12 @@ Kuma /metrics uses documented Basic auth with empty username and API key as pass
 monitor_status is cached with source/vantage/expiry. No Socket.IO management is used.
 Deployment version and live metrics names/authentication remain unverified.
 
+Pterodactyl uses the Client API paths shared by 1.x and 2.x. Portcullis lists only
+servers accessible to the configured Client API token and polls
+`/api/client/servers/{identifier}/resources`. It stores power state and suspension
+for administrator diagnostics, but discards resource-usage values and exposes no
+server-control operations. Deployment compatibility remains live-verification pending.
+
 | Capability | Implementation | Automated evidence | Real deployment |
 | --- | --- | --- | --- |
 | Pocket ID OIDC discovery/code/PKCE/signature | Real maintained library | Signed local issuer; bad signature/state/nonce/audience/issuer/expiry rejection | Awaiting configured instance |
@@ -52,7 +59,7 @@ Deployment version and live metrics names/authentication remain unverified.
 | NetBird access and narrow policies | Real HTTP writes/readback | Grant/overlap/revoke/failure/new-peer preservation tests | Traffic enforcement not tested |
 | Networks resources/routing associations | Real gated HTTP client | Create/readback + narrow target tests | Configure netbird.networks after verifying version |
 | Setup keys / peer removal | Real distinct APIs | One-use/minimum TTL; key revoke retains peers | Awaiting live enrollment/removal test |
-| HTTP/TCP/Kuma monitoring | Real outbound checks | Local network, metrics, SSRF and staleness tests | Configure approved targets |
+| HTTP/TCP/Kuma/Pterodactyl monitoring | Real outbound checks | Local network, metrics, provider contracts, state mapping, SSRF and staleness tests | Configure approved targets and Client API access |
 | Manual game fulfillment | Real audited workflow | Block/attest contracts and portal flow | Operator attestation required |
 | Mock service providers | Development/test-only | Production instantiation and worker activation rejected | Prohibited |
 | WoW server/account/control/telemetry | Intentionally unavailable scaffold | Typed awaiting-specification; no live control buttons | Deferred until supplied API specification |

@@ -103,6 +103,25 @@ describe("structured form payloads", () => {
     expect(saved.config.url).toBeUndefined();
     expect(saved.config.secretReference).toBeUndefined();
   });
+  it("serializes only the selected Pterodactyl server for panel monitoring", () => {
+    const fields = fieldsFor("/api/health/checks");
+    const values = defaults(fields, {
+      serviceId: id,
+      kind: "pterodactyl",
+      config: {
+        serverIdentifier: "1a7ce997",
+        host: "stale.example",
+        port: 25565,
+        url: "https://stale.example",
+        vantage: "Pterodactyl panel",
+      },
+    });
+    const saved = checkInput.parse(payload(fields, values));
+    expect(saved.config).toEqual({
+      serverIdentifier: "1a7ce997",
+      vantage: "Pterodactyl panel",
+    });
+  });
   it("serializes provider-specific bindings without leaking stale external IDs", () => {
     const fields = fieldsFor("/api/admin/bindings");
     const values = defaults(fields, {

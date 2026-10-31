@@ -901,6 +901,8 @@ function Gallery({ user, nav }: { user: Row; nav: (page: string) => void }) {
                       {observation.observedAt
                         ? `Last check: ${new Date(observation.observedAt).toLocaleString()} · ${observation.vantage ?? "Unknown location"} · ${observation.state}${new Date(observation.expiresAt) < new Date() ? " (stale)" : ""}`
                         : "Waiting for the first health check. Ensure the worker is running."}
+                      {observation.details?.powerState &&
+                        ` · Pterodactyl: ${observation.details.powerState}${observation.details.suspended ? " (suspended)" : ""}`}
                     </p>
                   ),
                 )
@@ -1119,7 +1121,14 @@ function RequestForm({
   );
 }
 type HealthKind =
-  "none" | "http" | "tcp" | "manual" | "kuma" | "waygate" | "incoming";
+  | "none"
+  | "http"
+  | "tcp"
+  | "manual"
+  | "kuma"
+  | "waygate"
+  | "incoming"
+  | "pterodactyl";
 interface HealthDraft {
   kind: HealthKind;
   intervalSeconds: number;
@@ -1128,6 +1137,7 @@ interface HealthDraft {
   port: number;
   expectedStatus: number;
   monitorName: string;
+  serverIdentifier: string;
   secretReference: string;
   vantage: string;
 }
@@ -1147,6 +1157,7 @@ const blankHealth = (): HealthDraft => ({
   port: 443,
   expectedStatus: 200,
   monitorName: "",
+  serverIdentifier: "",
   secretReference: "",
   vantage: "Portcullis worker",
 });
@@ -1268,6 +1279,14 @@ function AddServiceWizard({ done }: { done: () => void }) {
     });
   }, [errors, step]);
   const change = (path: string, value: unknown) => {
+    if (path === "metadata.type")
+      setHealth((current) => {
+        const compatible =
+          value === "game"
+            ? ["none", "tcp", "pterodactyl"].includes(current.kind)
+            : current.kind !== "pterodactyl";
+        return compatible ? current : blankHealth();
+      });
     setValues((current) => {
       let next = setAt(current, path, value);
       if (path === "name" && slugAutomatic.current)
@@ -1308,7 +1327,10 @@ function AddServiceWizard({ done }: { done: () => void }) {
   ).flatMap((endpoint: Row, index: number) => {
     if (!endpoint.host || !endpoint.ports?.[0]) return [];
     const label = endpoint.label || `Endpoint ${index + 1}`;
-    if (["http", "https"].includes(endpoint.protocol)) {
+    if (
+      values.metadata?.type !== "game" &&
+      ["http", "https"].includes(endpoint.protocol)
+    ) {
       const port = endpoint.ports?.[0];
       const standard =
         (endpoint.protocol === "http" && port === 80) ||
@@ -1351,6 +1373,8 @@ function AddServiceWizard({ done }: { done: () => void }) {
       config.port = health.port;
     }
     if (health.kind === "kuma") config.monitorName = health.monitorName;
+    if (health.kind === "pterodactyl")
+      config.serverIdentifier = health.serverIdentifier;
     if (["kuma", "waygate"].includes(health.kind) && health.secretReference)
       config.secretReference = health.secretReference;
     return {
@@ -1381,6 +1405,8 @@ function AddServiceWizard({ done }: { done: () => void }) {
         return "Enter a TCP host and port.";
       if (health.kind === "kuma" && (!health.url || !health.monitorName))
         return "Enter the Kuma URL and monitor name.";
+      if (health.kind === "pterodactyl" && !health.serverIdentifier)
+        return "Choose a Pterodactyl server.";
     }
     if (
       step === 2 &&
@@ -1433,7 +1459,9 @@ function AddServiceWizard({ done }: { done: () => void }) {
           e.fields.some((field) => field.startsWith("healthCheck.")) ||
           (!e.fields.length &&
             health.kind !== "none" &&
-            /monitor|target|url|port|waygate|webhook/i.test(e.message))
+            /monitor|target|url|port|waygate|webhook|pterodactyl|server|provider/i.test(
+              e.message,
+            ))
         )
           setStep(1);
         else if (/dependency|entitlement|visibility|provider/i.test(e.message))
@@ -1544,34 +1572,60 @@ function AddServiceWizard({ done }: { done: () => void }) {
                     }))
                   }
                 >
-                  <optgroup label="Common choices">
-                    <option value="none">No health check</option>
-                    <option value="http">HTTP</option>
-                    <option value="tcp">TCP</option>
-                  </optgroup>
-                  <optgroup label="Advanced choices">
-                    {(["manual", "kuma", "waygate", "incoming"] as const).map(
-                      (kind) => (
-                        <option
-                          key={kind}
-                          value={kind}
-                          disabled={availability[kind]?.available === false}
-                        >
-                          {kind === "kuma"
-                            ? "Uptime Kuma"
-                            : kind[0].toUpperCase() + kind.slice(1)}
-                        </option>
-                      ),
-                    )}
-                  </optgroup>
+                  {values.metadata?.type === "game" ? (
+                    <>
+                      <option value="none">No monitoring</option>
+                      <option value="tcp">TCP</option>
+                      <option
+                        value="pterodactyl"
+                        disabled={availability.pterodactyl?.available === false}
+                      >
+                        Pterodactyl
+                      </option>
+                    </>
+                  ) : (
+                    <>
+                      <optgroup label="Common choices">
+                        <option value="none">No health check</option>
+                        <option value="http">HTTP</option>
+                        <option value="tcp">TCP</option>
+                      </optgroup>
+                      <optgroup label="Advanced choices">
+                        {(
+                          ["manual", "kuma", "waygate", "incoming"] as const
+                        ).map((kind) => (
+                          <option
+                            key={kind}
+                            value={kind}
+                            disabled={availability[kind]?.available === false}
+                          >
+                            {kind === "kuma"
+                              ? "Uptime Kuma"
+                              : kind[0].toUpperCase() + kind.slice(1)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </>
+                  )}
                 </select>
               </label>
               {(options.data?.healthKinds ?? [])
-                .filter((kind: Row) => !kind.available && kind.reason)
+                .filter(
+                  (kind: Row) =>
+                    !kind.available &&
+                    kind.reason &&
+                    (values.metadata?.type === "game"
+                      ? kind.id === "pterodactyl"
+                      : kind.id !== "pterodactyl"),
+                )
                 .map((kind: Row) => (
                   <small className="muted" key={kind.id}>
-                    {kind.id === "waygate" ? "Waygate" : "Incoming"}:{" "}
-                    {kind.reason}
+                    {kind.id === "waygate"
+                      ? "Waygate"
+                      : kind.id === "pterodactyl"
+                        ? "Pterodactyl"
+                        : "Incoming"}
+                    : {kind.reason}
                   </small>
                 ))}
               {options.error && (
@@ -1703,7 +1757,39 @@ function AddServiceWizard({ done }: { done: () => void }) {
                       />
                     </label>
                   )}
-                  {["http", "tcp", "kuma", "waygate"].includes(health.kind) && (
+                  {health.kind === "pterodactyl" && (
+                    <ResourceSelect
+                      source="/api/form-options/pterodactyl-servers"
+                      label="Pterodactyl server"
+                      value={health.serverIdentifier}
+                      onChange={(value) =>
+                        setHealth((current) => ({
+                          ...current,
+                          serverIdentifier: value,
+                        }))
+                      }
+                      onReady={(ready) =>
+                        setBlocked((current) => ({
+                          ...current,
+                          pterodactylServer: !ready,
+                        }))
+                      }
+                      onOptions={(choices) =>
+                        setLabels((current) => ({
+                          ...current,
+                          ...Object.fromEntries(
+                            choices.map((choice) => [choice.id, choice.label]),
+                          ),
+                        }))
+                      }
+                      invalid={errors.includes(
+                        "healthCheck.config.serverIdentifier",
+                      )}
+                    />
+                  )}
+                  {["http", "tcp", "kuma", "waygate", "pterodactyl"].includes(
+                    health.kind,
+                  ) && (
                     <label>
                       Interval in seconds
                       <input

@@ -216,12 +216,29 @@ export async function providerFixture(port = 4200) {
         { id: "mod-transmog", title: "Transmogrification" },
       ],
     },
+    pterodactyl: {
+      powerState: "running",
+      suspended: false,
+      servers: [
+        {
+          identifier: "1a7ce997",
+          name: "Community Minecraft",
+          node: "Gaming node",
+          description: "Primary community game server",
+        },
+      ],
+    },
     writes: [] as any[],
     failWrites: false,
     ambiguous: false,
     delayMs: 0,
   };
   app.addHook("onRequest", async (r, reply) => {
+    if (r.url.startsWith("/api/client")) {
+      if (r.headers.authorization !== "Bearer pterodactyl-fixture-client-token")
+        return reply.code(401).send({ error: "unauthorized" });
+      return;
+    }
     if (r.url.startsWith("/api/v1/")) {
       reply.header("Cache-Control", "no-store");
       if (
@@ -410,6 +427,33 @@ export async function providerFixture(port = 4200) {
   app.get("/api/events", () => []);
   app.get("/api/dns/settings", () => ({ disabled_management_groups: [] }));
   app.get("/api/dns/nameservers", () => []);
+  app.get("/api/client", () => ({
+    object: "list",
+    data: state.pterodactyl.servers.map((attributes) => ({
+      object: "server",
+      attributes,
+    })),
+    meta: {
+      pagination: { current_page: 1, total_pages: 1 },
+    },
+  }));
+  app.get("/api/client/servers/:identifier/resources", (request, reply) => {
+    const identifier = (request.params as any).identifier;
+    if (
+      !state.pterodactyl.servers.some(
+        (server) => server.identifier === identifier,
+      )
+    )
+      return reply.code(404).send({ error: "not_found" });
+    return {
+      object: "stats",
+      attributes: {
+        current_state: state.pterodactyl.powerState,
+        is_suspended: state.pterodactyl.suspended,
+        resources: {},
+      },
+    };
+  });
   const waygateEnvelope = (
     data: unknown,
     partial = false,

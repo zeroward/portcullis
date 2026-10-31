@@ -175,6 +175,95 @@ test("service draft dismissal, checkbox selections and hidden validation preserv
   await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("");
 });
 
+test("game setup offers only TCP or Pterodactyl monitoring", async ({
+  page,
+}) => {
+  await page.route("**/api/service-setups/options", (route) =>
+    route.fulfill({
+      json: {
+        gameMetadata: false,
+        healthKinds: [
+          { id: "http", available: true },
+          { id: "tcp", available: true },
+          { id: "manual", available: true },
+          { id: "kuma", available: true },
+          { id: "waygate", available: false, reason: "Not configured" },
+          { id: "incoming", available: false, reason: "Not configured" },
+          { id: "pterodactyl", available: true },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/form-options/pterodactyl-servers", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: "1a7ce997",
+          label: "Community Minecraft",
+          description: "Gaming node",
+        },
+      ],
+    }),
+  );
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "+ Add service", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Name", { exact: true }).fill("Pterodactyl game");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(
+    dialog.getByRole("combobox", { name: "Check type", exact: true }),
+  ).toContainText("HTTP");
+  await expect(
+    dialog.getByRole("combobox", { name: "Check type", exact: true }),
+  ).toContainText("Uptime Kuma");
+  await dialog.getByRole("button", { name: "Back", exact: true }).click();
+  await dialog.getByLabel("Type", { exact: true }).selectOption("game");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  const kinds = dialog.getByRole("combobox", {
+    name: "Check type",
+    exact: true,
+  });
+  await expect(kinds.locator("option")).toHaveText([
+    "No monitoring",
+    "TCP",
+    "Pterodactyl",
+  ]);
+  await kinds.selectOption("pterodactyl");
+  await dialog
+    .getByLabel("Pterodactyl server", { exact: true })
+    .selectOption("1a7ce997");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.route("**/api/service-setups", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          json: {
+            service: { id: "pterodactyl-fixture", version: 1 },
+            healthCheck: { id: "check-fixture" },
+          },
+        })
+      : route.continue(),
+  );
+  const write = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/service-setups") &&
+      request.method() === "POST",
+  );
+  await dialog
+    .getByRole("button", { name: "Create service", exact: true })
+    .click();
+  expect((await write).postDataJSON().healthCheck).toEqual({
+    kind: "pterodactyl",
+    intervalSeconds: 60,
+    config: {
+      serverIdentifier: "1a7ce997",
+      vantage: "Portcullis worker",
+    },
+  });
+});
+
 for (const width of [390, 768, 1440])
   for (const theme of ["dark", "light"]) {
     test(`visual review: ${width}px ${theme}, member and administrator`, async ({

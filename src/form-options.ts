@@ -122,6 +122,17 @@ export function registerFormOptions(
         (s) => s.name,
       );
     }
+    if (kind === "pterodactyl-servers") {
+      requirePermission(actor, "monitor.manage");
+      const pterodactyl = clients.pterodactyl;
+      invariant(pterodactyl, "provider_not_configured", 503);
+      invariant(pterodactyl.isConfigured(), "provider_not_configured", 503);
+      return (await pterodactyl.servers()).map((server) => ({
+        id: server.identifier,
+        label: server.name,
+        description: server.node,
+      }));
+    }
     if (kind === "jobs") {
       requirePermission(actor, "*");
       return options(

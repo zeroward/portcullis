@@ -76,6 +76,11 @@ self-editing. Successful role writes return `{ok:true}`.
   and port must exactly match a TCP/RDP endpoint declared on the same service. The
   worker revalidates that relationship on every poll and rejects unsafe addresses.
   HTTP-based checks continue to use the configured destination and port allowlists.
+- Guided game setup offers only TCP or Pterodactyl monitoring (or no monitoring).
+  Pterodactyl checks store a selected server identifier, use the deployment's
+  configured Client API credentials, and map running/transition/offline/suspended
+  states to cached portal health. Only administrators receive the sanitized source
+  state and suspension flag; resource usage and credentials are never returned.
 - Maintenance start brings a future window forward; end cancels a future window
   immediately or ends a running one. Incident lists include authorized timelines.
 - /api/admin/access-configuration provides entitlement prerequisites, bindings and
@@ -152,6 +157,7 @@ Provider credentials stay server-side; there is no generic provider proxy.
 | POST | `/api/health/checks` |
 | POST | `/api/health/checks/:id/manual` |
 | POST | `/api/health/incoming` |
+| GET | `/api/form-options/pterodactyl-servers` |
 | POST | `/api/incidents` |
 | POST | `/api/incidents/:id` |
 | GET | `/api/incidents/:id/timeline` |

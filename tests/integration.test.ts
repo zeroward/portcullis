@@ -55,6 +55,8 @@ const env = {
   NETBIRD_TOKEN: "netbird-fixture-token",
   WAYGATE_URL: "http://127.0.0.1:4200",
   MANAGEMENT_API_TOKEN: "waygate-fixture-token-0123456789abcdef",
+  PTERODACTYL_URL: "http://127.0.0.1:4200",
+  PTERODACTYL_CLIENT_TOKEN: "pterodactyl-fixture-client-token",
   CAPABILITY_OVERRIDES: '{"netbird.networks":true,"pocket.enrollment":true}',
   MONITOR_ALLOWED_CIDRS: "127.0.0.1/32,192.168.10.0/24",
   MONITOR_ALLOWED_PORTS: "4200,4300,80,443",
@@ -342,7 +344,7 @@ describe("form lookup authorization and minimal projections", () => {
 });
 describe("OIDC and portal authorization", () => {
   it("migrates once on a clean real PostgreSQL database and seeds only explicitly", async () => {
-    expect((await db.query("SELECT * FROM schema_migrations")).length).toBe(3);
+    expect((await db.query("SELECT * FROM schema_migrations")).length).toBe(4);
     expect((await db.query("SHOW server_version"))[0].server_version).toMatch(
       /^18/,
     );
@@ -485,6 +487,23 @@ describe("catalog, tickets, guides and files", () => {
         .json()
         .healthKinds.find((kind: any) => kind.id === "incoming").available,
     ).toBe(true);
+    expect(
+      setupOptions
+        .json()
+        .healthKinds.find((kind: any) => kind.id === "pterodactyl").available,
+    ).toBe(true);
+    expect(
+      (await call(member, "/api/form-options/pterodactyl-servers")).statusCode,
+    ).toBe(403);
+    expect(
+      (await call(owner, "/api/form-options/pterodactyl-servers")).json(),
+    ).toEqual([
+      {
+        id: "1a7ce997",
+        label: "Community Minecraft",
+        description: "Gaming node",
+      },
+    ]);
     const response = await call(owner, "/api/service-setups", "POST", body);
     expect(response.statusCode).toBe(200);
     expect(response.json().service.slug).toBe("atomic-game-service");
@@ -551,6 +570,100 @@ describe("catalog, tickets, guides and files", () => {
         "mismatched-tcp-service",
       ]),
     ).toHaveLength(0);
+
+    const pterodactylBody = {
+      service: {
+        ...body.service,
+        name: "Pterodactyl game service",
+        slug: "pterodactyl-game-service",
+      },
+      healthCheck: {
+        kind: "pterodactyl",
+        intervalSeconds: 30,
+        config: {
+          serverIdentifier: "1a7ce997",
+          vantage: "Pterodactyl panel",
+        },
+      },
+    };
+    const pterodactyl = await call(
+      owner,
+      "/api/service-setups",
+      "POST",
+      pterodactylBody,
+    );
+    expect(pterodactyl.statusCode).toBe(200);
+    expect(pterodactyl.json().healthCheck.config).toEqual({
+      serverIdentifier: "1a7ce997",
+      vantage: "Pterodactyl panel",
+    });
+    await system.monitoring.poll(pterodactyl.json().healthCheck.id);
+    const pterodactylService = pterodactyl.json().service.id;
+    const ownerDetail = (
+      await call(owner, `/api/services/${pterodactylService}`)
+    ).json();
+    expect(ownerDetail.health.state).toBe("healthy");
+    expect(ownerDetail.health.observations[0].details).toEqual({
+      powerState: "running",
+      suspended: false,
+    });
+    const memberDetail = (
+      await call(member, `/api/services/${pterodactylService}`)
+    ).json();
+    expect(memberDetail.health.state).toBe("healthy");
+    expect(memberDetail.health.observations[0]).not.toHaveProperty("details");
+
+    fixture.state.pterodactyl.powerState = "starting";
+    await system.monitoring.poll(pterodactyl.json().healthCheck.id);
+    expect(
+      (
+        await db.query(
+          "SELECT state FROM health_observations WHERE check_id=$1 ORDER BY observed_at DESC LIMIT 1",
+          [pterodactyl.json().healthCheck.id],
+        )
+      )[0].state,
+    ).toBe("degraded");
+    fixture.state.pterodactyl.powerState = "running";
+
+    const badPterodactyl = await call(owner, "/api/service-setups", "POST", {
+      ...pterodactylBody,
+      service: {
+        ...pterodactylBody.service,
+        name: "Missing Pterodactyl service",
+        slug: "missing-pterodactyl-service",
+      },
+      healthCheck: {
+        ...pterodactylBody.healthCheck,
+        config: {
+          ...pterodactylBody.healthCheck.config,
+          serverIdentifier: "missing1",
+        },
+      },
+    });
+    expect(badPterodactyl.statusCode).toBe(502);
+    expect(badPterodactyl.json().provider).toBe("pterodactyl");
+    expect(
+      await db.query("SELECT 1 FROM services WHERE slug=$1", [
+        "missing-pterodactyl-service",
+      ]),
+    ).toHaveLength(0);
+
+    const nonGamePterodactyl = await call(
+      owner,
+      "/api/service-setups",
+      "POST",
+      {
+        ...pterodactylBody,
+        service: {
+          ...pterodactylBody.service,
+          name: "Non-game Pterodactyl service",
+          slug: "non-game-pterodactyl-service",
+          metadata: { type: "service" },
+        },
+      },
+    );
+    expect(nonGamePterodactyl.statusCode).toBe(400);
+    expect(nonGamePterodactyl.json().error).toBe("game_service_required");
 
     const invalid = await call(owner, "/api/service-setups", "POST", {
       ...body,

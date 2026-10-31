@@ -30,6 +30,15 @@ const schema = z.object({
   WAYGATE_TOKEN: z.string().optional(),
   MANAGEMENT_API_TOKEN: z.string().optional(),
   WAYGATE_VERSION: z.string().default("1.0.0"),
+  PTERODACTYL_URL: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.url().optional(),
+  ),
+  PTERODACTYL_CLIENT_TOKEN: z
+    .string()
+    .min(16)
+    .regex(/^[\x21-\x7e]+$/)
+    .optional(),
   RAWG_API_KEY: z.string().min(1).optional(),
   RAWG_API_URL: z.url().default("https://api.rawg.io"),
   CAPABILITY_OVERRIDES: z.string().default("{}"),
@@ -103,6 +112,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     (!["http:", "https:"].includes(new URL(c.WAYGATE_URL).protocol) ||
       new URL(c.WAYGATE_URL).username ||
       new URL(c.WAYGATE_URL).password)
+  )
+    throw new Error("Invalid integration destination");
+  if (!!c.PTERODACTYL_URL !== !!c.PTERODACTYL_CLIENT_TOKEN)
+    throw new Error(
+      "Pterodactyl URL and Client API token must be configured together",
+    );
+  if (
+    c.PTERODACTYL_URL &&
+    (!["http:", "https:"].includes(new URL(c.PTERODACTYL_URL).protocol) ||
+      new URL(c.PTERODACTYL_URL).username ||
+      new URL(c.PTERODACTYL_URL).password ||
+      new URL(c.PTERODACTYL_URL).search ||
+      new URL(c.PTERODACTYL_URL).hash ||
+      (c.NODE_ENV === "production" &&
+        new URL(c.PTERODACTYL_URL).protocol !== "https:"))
   )
     throw new Error("Invalid integration destination");
   for (const token of [c.WAYGATE_TOKEN, c.MANAGEMENT_API_TOKEN]) {
