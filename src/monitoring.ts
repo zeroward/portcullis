@@ -75,6 +75,64 @@ export async function resolveTarget(
   );
   return addresses[0];
 }
+function safeTcpAddress(address: string, config: Config) {
+  let ip = ipaddr.process(address);
+  if (ip.kind() === "ipv6" && (ip as ipaddr.IPv6).isIPv4MappedAddress())
+    ip = (ip as ipaddr.IPv6).toIPv4Address();
+  const range = ip.range();
+  const normalized = ip.toString();
+  return (
+    ![
+      "linkLocal",
+      "multicast",
+      "broadcast",
+      "unspecified",
+      "reserved",
+    ].includes(range) &&
+    !["169.254.169.254", "100.100.100.200", "fd00:ec2::254"].includes(
+      normalized,
+    ) &&
+    (range !== "loopback" || config.NODE_ENV !== "production")
+  );
+}
+export async function resolveTcpTarget(host: string, config: Config) {
+  const addresses = net.isIP(host)
+    ? [{ address: host, family: net.isIP(host) }]
+    : await dns.lookup(host, { all: true });
+  invariant(
+    addresses.length &&
+      addresses.every((a) => safeTcpAddress(a.address, config)),
+    "monitor_target_rejected",
+  );
+  return addresses[0];
+}
+
+type ServiceMetadata = {
+  endpoints?: Array<{
+    host?: string;
+    protocol?: string;
+    ports?: number[];
+  }>;
+};
+function normalizedHost(host: string) {
+  return host
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "")
+    .toLowerCase();
+}
+export function matchesTcpEndpoint(
+  metadata: ServiceMetadata | undefined,
+  host: string,
+  port: number,
+) {
+  return !!metadata?.endpoints?.some(
+    (endpoint) =>
+      endpoint.host &&
+      normalizedHost(endpoint.host) === normalizedHost(host) &&
+      ["tcp", "rdp"].includes(endpoint.protocol ?? "") &&
+      endpoint.ports?.includes(port),
+  );
+}
 export async function checkedHttp(
   urlString: string,
   config: Config,
@@ -236,7 +294,10 @@ export class Monitoring {
     readonly config: Config,
     readonly getSecret: (id: string) => Promise<string>,
   ) {}
-  async prepare(input: unknown): Promise<CheckDefinition> {
+  async prepare(
+    input: unknown,
+    serviceMetadata?: ServiceMetadata,
+  ): Promise<CheckDefinition> {
     const d = checkDefinitionInput.parse(input);
     if (d.kind === "waygate" && !d.config.url && this.config.WAYGATE_URL) {
       d.config.url = this.config.WAYGATE_URL;
@@ -256,7 +317,11 @@ export class Monitoring {
     }
     if (d.kind === "tcp") {
       invariant(d.config.host && d.config.port, "target_required");
-      await resolveTarget(d.config.host, d.config.port, this.config);
+      invariant(
+        matchesTcpEndpoint(serviceMetadata, d.config.host, d.config.port),
+        "tcp_target_must_match_service_endpoint",
+      );
+      await resolveTcpTarget(d.config.host, this.config);
     }
     if (d.kind === "kuma")
       invariant(d.config.monitorName, "monitor_name_required");
@@ -289,16 +354,27 @@ export class Monitoring {
   async save(actor: Actor, input: unknown) {
     const parsed = checkInput.parse(input);
     requirePermission(actor, "monitor.manage", parsed.serviceId);
-    const d = await this.prepare({
-      kind: parsed.kind,
-      intervalSeconds: parsed.intervalSeconds,
-      config: parsed.config,
-    });
+    const [service] = await this.db.query(
+      "SELECT metadata FROM services WHERE id=$1",
+      [parsed.serviceId],
+    );
+    invariant(service, "not_found", 404);
+    const d = await this.prepare(
+      {
+        kind: parsed.kind,
+        intervalSeconds: parsed.intervalSeconds,
+        config: parsed.config,
+      },
+      service.metadata,
+    );
     return this.createPrepared(this.db, actor, parsed.serviceId, d);
   }
   async poll(id: string) {
     const [c] = await this.db.query(
-      "SELECT * FROM health_checks WHERE id=$1 AND enabled",
+      `SELECT c.*,s.metadata AS service_metadata
+       FROM health_checks c
+       JOIN services s ON s.id=c.service_id
+       WHERE c.id=$1 AND c.enabled`,
       [id],
     );
     if (!c) return;
@@ -366,11 +442,11 @@ export class Monitoring {
         }
       }
       if (c.kind === "tcp") {
-        const address = await resolveTarget(
-          c.config.host,
-          c.config.port,
-          this.config,
+        invariant(
+          matchesTcpEndpoint(c.service_metadata, c.config.host, c.config.port),
+          "tcp_target_must_match_service_endpoint",
         );
+        const address = await resolveTcpTarget(c.config.host, this.config);
         await new Promise<void>((resolve, reject) => {
           const socket = net.connect({
             host: address.address,

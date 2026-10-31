@@ -18,7 +18,12 @@ import {
   MockServiceProvider,
   WowManagerProvider,
 } from "../src/providers/contracts.js";
-import { allowedAddress, checkedHttp, parseKuma } from "../src/monitoring.js";
+import {
+  allowedAddress,
+  checkedHttp,
+  parseKuma,
+  resolveTcpTarget,
+} from "../src/monitoring.js";
 import { can } from "../src/domain/authorization.js";
 import { hash, signedBody } from "../src/security.js";
 import { Notifications } from "../src/notifications.js";
@@ -492,6 +497,60 @@ describe("catalog, tickets, guides and files", () => {
         [response.json().service.id, response.json().healthCheck.id],
       ),
     ).toHaveLength(2);
+
+    const tcpBody = {
+      service: {
+        ...body.service,
+        name: "TCP game service",
+        slug: "tcp-game-service",
+        metadata: {
+          type: "game",
+          endpoints: [
+            {
+              label: "Game server",
+              host: "192.168.10.9",
+              protocol: "tcp",
+              ports: [25565],
+              network: "lan",
+            },
+          ],
+        },
+      },
+      healthCheck: {
+        kind: "tcp",
+        intervalSeconds: 30,
+        config: {
+          host: "192.168.10.9",
+          port: 25565,
+          vantage: "Game port probe",
+        },
+      },
+    };
+    const tcp = await call(owner, "/api/service-setups", "POST", tcpBody);
+    expect(tcp.statusCode).toBe(200);
+    expect(tcp.json().healthCheck.config.port).toBe(25565);
+
+    const mismatchedTcp = await call(owner, "/api/service-setups", "POST", {
+      ...tcpBody,
+      service: {
+        ...tcpBody.service,
+        name: "Mismatched TCP service",
+        slug: "mismatched-tcp-service",
+      },
+      healthCheck: {
+        ...tcpBody.healthCheck,
+        config: { ...tcpBody.healthCheck.config, port: 25566 },
+      },
+    });
+    expect(mismatchedTcp.statusCode).toBe(400);
+    expect(mismatchedTcp.json().error).toBe(
+      "tcp_target_must_match_service_endpoint",
+    );
+    expect(
+      await db.query("SELECT 1 FROM services WHERE slug=$1", [
+        "mismatched-tcp-service",
+      ]),
+    ).toHaveLength(0);
 
     const invalid = await call(owner, "/api/service-setups", "POST", {
       ...body,
@@ -1164,6 +1223,19 @@ describe("network, health, notices and audit", () => {
     expect(allowedAddress("127.0.0.1", { ...c, NODE_ENV: "production" })).toBe(
       false,
     );
+    const production = { ...c, NODE_ENV: "production" as const };
+    await expect(resolveTcpTarget("192.168.10.2", production)).resolves.toEqual(
+      expect.objectContaining({ address: "192.168.10.2" }),
+    );
+    await expect(resolveTcpTarget("127.0.0.1", production)).rejects.toThrow(
+      "monitor_target_rejected",
+    );
+    await expect(
+      resolveTcpTarget("169.254.169.254", production),
+    ).rejects.toThrow("monitor_target_rejected");
+    await expect(resolveTcpTarget("fd00:ec2::254", production)).rejects.toThrow(
+      "monitor_target_rejected",
+    );
   });
   it("preserves dependency edits and aggregates required/optional cached health without leaking hidden identities", async () => {
     const create = async (slug: string, visibility = "discoverable") => {
@@ -1471,6 +1543,23 @@ describe("network, health, notices and audit", () => {
   });
   it("TCP health has a real worker vantage and alert suppression preserves measurements", async () => {
     const [s] = await db.query("SELECT * FROM services WHERE slug='community'");
+    await db.query(
+      `UPDATE services
+       SET metadata=jsonb_set(metadata,'{endpoints}',$2::jsonb)
+       WHERE id=$1`,
+      [
+        s.id,
+        JSON.stringify([
+          {
+            label: "Test TCP server",
+            host: "127.0.0.1",
+            protocol: "tcp",
+            ports: [4300],
+            network: "lan",
+          },
+        ]),
+      ],
+    );
     const c = (
       await call(owner, "/api/health/checks", "POST", {
         serviceId: s.id,
@@ -1507,6 +1596,19 @@ describe("network, health, notices and audit", () => {
         ])
       )[0].value.state,
     ).toBe("down");
+    await db.query(
+      "UPDATE services SET metadata=metadata-'endpoints' WHERE id=$1",
+      [s.id],
+    );
+    await system.monitoring.poll(c.id);
+    expect(
+      (
+        await db.query(
+          "SELECT state FROM health_observations WHERE check_id=$1 ORDER BY observed_at DESC LIMIT 1",
+          [c.id],
+        )
+      )[0].state,
+    ).toBe("unknown");
   });
   it("optional SMTP failure retries separately and leaves grants/tickets/in-app updates intact", async () => {
     await db.query(

@@ -72,6 +72,10 @@ self-editing. Successful role writes return `{ok:true}`.
   A required failure reports down; an optional failure reports degraded. Stale or
   missing observations stay stale/unknown. Measured state remains separate from
   maintenance and dependency state. Dependency identities are admin-only.
+- TCP health checks are connect-only probes and may use any valid port, but the host
+  and port must exactly match a TCP/RDP endpoint declared on the same service. The
+  worker revalidates that relationship on every poll and rejects unsafe addresses.
+  HTTP-based checks continue to use the configured destination and port allowlists.
 - Maintenance start brings a future window forward; end cancels a future window
   immediately or ends a running one. Incident lists include authorized timelines.
 - /api/admin/access-configuration provides entitlement prerequisites, bindings and

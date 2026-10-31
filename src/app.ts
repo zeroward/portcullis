@@ -246,7 +246,10 @@ export async function createApp(
     let prepared = null;
     if (input.healthCheck) {
       requirePermission(r.actor, "monitor.manage");
-      prepared = await monitoring.prepare(input.healthCheck);
+      prepared = await monitoring.prepare(
+        input.healthCheck,
+        input.service.metadata,
+      );
     }
     const created = await catalog.createWith(
       r.actor,
