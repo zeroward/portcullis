@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Database } from "../db/index.js";
 import { Catalog, serviceInput } from "./catalog.js";
-import { can, requirePermission, type Actor } from "./authorization.js";
+import {
+  can,
+  requirePermission,
+  requireFresh,
+  type Actor,
+} from "./authorization.js";
 import { invariant } from "../errors.js";
 import type { PterodactylClient } from "../providers/pterodactyl.js";
 import type { Monitoring } from "../monitoring.js";
@@ -184,6 +189,36 @@ export class Games {
         [actor.id, id],
       );
     return { ok: true };
+  }
+  async remove(actor: Actor, id: string, input: unknown) {
+    requirePermission(actor, "catalog.manage");
+    const data = z
+      .object({ confirmation: z.string(), version: z.number().int() })
+      .strict()
+      .parse(input);
+    requireFresh(actor, data.confirmation, "DELETE");
+    return this.db.transaction(async (tx) => {
+      const [game] = await tx.query(
+        "SELECT * FROM games WHERE id=$1 FOR UPDATE",
+        [id],
+      );
+      invariant(game, "not_found", 404);
+      invariant(game.version === data.version, "version_conflict", 409);
+      invariant(
+        !(
+          await tx.query("SELECT id FROM services WHERE game_id=$1 LIMIT 1", [
+            id,
+          ])
+        ).length,
+        "game_has_servers",
+        409,
+      );
+      await tx.query("DELETE FROM games WHERE id=$1", [id]);
+      await audit(tx, actor.id, "game.delete", id, {
+        name: game.presentation.name,
+      });
+      return { ok: true };
+    });
   }
   async move(actor: Actor, server: string, game: string) {
     requirePermission(actor, "catalog.manage");

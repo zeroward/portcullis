@@ -1944,6 +1944,79 @@ describe("network, health, notices and audit", () => {
   });
 });
 describe("games library", () => {
+  it("refuses to delete a game that still owns server records", async () => {
+    const [game] = await db.query(
+      "INSERT INTO games(presentation) VALUES ($1) RETURNING *",
+      [JSON.stringify({ name: "Protected parent" })],
+    );
+    const [server] = await db.query(
+      "INSERT INTO services(name,slug,summary,visibility,metadata,game_id) VALUES ('Protected child',$1,'','admin','{\"type\":\"game\"}',$2) RETURNING id",
+      [`protected-${randomUUID()}`, game.id],
+    );
+    const result = await call(owner, `/api/games/${game.id}`, "DELETE", {
+      confirmation: "DELETE",
+      version: game.version,
+    });
+    expect(result.statusCode).toBe(409);
+    expect(result.json().error).toBe("game_has_servers");
+    expect(
+      (
+        await db.query("SELECT game_id FROM services WHERE id=$1", [server.id])
+      )[0].game_id,
+    ).toBe(game.id);
+  });
+  it("deletes an empty game with confirmation, permission and version checks, removing favorites and recording audit", async () => {
+    const [game] = await db.query(
+      "INSERT INTO games(presentation) VALUES ($1) RETURNING *",
+      [JSON.stringify({ name: "Delete empty game" })],
+    );
+    await db.query("INSERT INTO game_favorites VALUES ($1,$2)", [
+      owner.id,
+      game.id,
+    ]);
+    const body = { confirmation: "DELETE", version: game.version };
+    expect(
+      (await call(member, `/api/games/${game.id}`, "DELETE", body)).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await call(owner, `/api/games/${game.id}`, "DELETE", {
+          ...body,
+          confirmation: "",
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await call(owner, `/api/games/${game.id}`, "DELETE", {
+          ...body,
+          version: 0,
+        })
+      ).statusCode,
+    ).toBe(409);
+    expect(
+      (await call(owner, `/api/games/${game.id}`, "DELETE", body)).statusCode,
+    ).toBe(200);
+    expect(
+      await db.query("SELECT id FROM games WHERE id=$1", [game.id]),
+    ).toEqual([]);
+    expect(
+      await db.query("SELECT game_id FROM game_favorites WHERE game_id=$1", [
+        game.id,
+      ]),
+    ).toEqual([]);
+    expect(
+      (
+        await db.query(
+          "SELECT action FROM audit_events WHERE target=$1 AND action='game.delete'",
+          [game.id],
+        )
+      ).length,
+    ).toBe(1);
+    expect(
+      (await call(owner, `/api/games/${game.id}`, "DELETE", body)).statusCode,
+    ).toBe(404);
+  });
   it("migrates populated game records without changing server IDs, favorites or health history", async () => {
     await pg.createDatabase("games_upgrade");
     const upgrade = new Database(

@@ -157,6 +157,7 @@ export async function createApp(
   app.get("/api/games", (r) => games.list(r.actor));
   app.get("/api/games/:id", (r) => games.detail(r.actor, id(r)));
   app.put("/api/games/:id", (r) => games.edit(r.actor, id(r), r.body));
+  app.delete("/api/games/:id", (r) => games.remove(r.actor, id(r), r.body));
   app.put("/api/games/:id/favorite", (r) =>
     games.favorite(
       r.actor,

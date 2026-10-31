@@ -7,6 +7,76 @@ async function login(page: Page, user = "dev-owner") {
     page.getByRole("heading", { name: "Your next adventure." }),
   ).toBeVisible();
 }
+test("game deletion protects populated games and removes an empty game after confirmation", async ({
+  page,
+}) => {
+  await login(page);
+  const { csrf } = await (await page.request.get("/api/me")).json();
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:3000" };
+  const create = async (name: string) => {
+    const result = await page.request.post("/api/game-setups", {
+      headers,
+      data: {
+        submissionId: crypto.randomUUID(),
+        games: [{ key: "game", presentation: { name } }],
+        servers: [
+          {
+            gameKey: "game",
+            name: `${name} server`,
+            connection: { host: "play.example.com", port: 25565 },
+            visibility: "discoverable",
+          },
+        ],
+      },
+    });
+    expect(result.ok()).toBe(true);
+    const { gameIds } = await result.json();
+    return (await page.request.get(`/api/games/${gameIds[0]}`)).json();
+  };
+  const game = await create("Delete browser game");
+  const target = await create("Keep browser game");
+  await page.reload();
+  await page
+    .locator(".game-open")
+    .filter({ hasText: "Delete browser game" })
+    .click();
+  await page.getByRole("button", { name: "Edit game", exact: true }).click();
+  await page.getByRole("button", { name: "Delete game…", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "still contains 1 server entry",
+  );
+  await page.getByRole("button", { name: "Back to game" }).click();
+  expect(
+    (
+      await page.request.put(`/api/game-servers/${game.servers[0].id}/game`, {
+        headers,
+        data: { gameId: target.id },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
+  await page
+    .locator(".game-open")
+    .filter({ hasText: "Delete browser game" })
+    .click();
+  await page.getByRole("button", { name: "Edit game", exact: true }).click();
+  await page.getByRole("button", { name: "Delete game…", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Delete game", exact: true }),
+  ).toBeDisabled();
+  await page.getByLabel("Type DELETE to confirm").fill("DELETE");
+  await page.getByRole("button", { name: "Delete game", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Your next adventure." }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".game-open").filter({ hasText: "Delete browser game" }),
+  ).toHaveCount(0);
+  expect(
+    (await page.request.get(`/api/services/${game.servers[0].id}`)).ok(),
+  ).toBe(true);
+});
 test("manual setup retains draft, requires access, publishes and copies a complete IPv6 address", async ({
   page,
   context,

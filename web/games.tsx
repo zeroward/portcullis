@@ -51,6 +51,9 @@ export function GamesLibrary({
     [filter, setFilter] = useState("all"),
     [editing, setEditing] = useState<Row>(),
     [presentation, setPresentation] = useState<Row>(),
+    [deleting, setDeleting] = useState<Row>(),
+    [confirmation, setConfirmation] = useState(""),
+    [deleteError, setDeleteError] = useState(""),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState("");
   const canManage = user.roles.some(
@@ -449,6 +452,110 @@ export function GamesLibrary({
               Save game
             </button>
           </form>
+          <section className="setup-panel">
+            <h3>Delete game</h3>
+            <p>
+              Remove this game from the library. Move or remove its server
+              entries first.
+            </p>
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={() => {
+                setDeleting(game);
+                setPresentation(undefined);
+                setConfirmation("");
+                setDeleteError("");
+              }}
+            >
+              Delete game…
+            </button>
+          </section>
+        </Modal>
+      )}
+      {deleting && (
+        <Modal
+          title={`Delete ${deleting.name}?`}
+          close={() => {
+            if (!busy) setDeleting(undefined);
+          }}
+        >
+          {deleting.servers.length ? (
+            <>
+              <p>
+                This game still contains {deleting.servers.length} server{" "}
+                {deleting.servers.length === 1 ? "entry" : "entries"}. Move them
+                to another game or remove them in Server settings before
+                deleting the game.
+              </p>
+              <button onClick={() => setDeleting(undefined)}>
+                Back to game
+              </button>
+            </>
+          ) : (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusy(true);
+                setDeleteError("");
+                try {
+                  await api(`/api/games/${deleting.id}`, "DELETE", {
+                    confirmation,
+                    version: deleting.version,
+                  });
+                  setDeleting(undefined);
+                  setSelected(undefined);
+                  setNotice(`${deleting.name} was deleted from the library.`);
+                  await refresh();
+                } catch (e) {
+                  const code = (e as Error).message;
+                  setDeleteError(
+                    code === "game_has_servers"
+                      ? "A server was added to this game. Close this dialog and move or remove its servers first."
+                      : code === "version_conflict"
+                        ? "This game changed. Close this dialog and reopen it to review the latest version."
+                        : code === "reauthentication_required"
+                          ? "Refresh your sign-in before deleting this game."
+                          : message(e),
+                  );
+                  await refresh();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <p>
+                This permanently removes the empty game and its favorites from
+                Portcullis. It does not delete any actual game server.
+              </p>
+              <label>
+                Type DELETE to confirm
+                <input
+                  autoComplete="off"
+                  required
+                  value={confirmation}
+                  onChange={(e) => setConfirmation(e.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              {deleteError && <p role="alert">{deleteError}</p>}
+              <div className="game-actions">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setDeleting(undefined)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="danger"
+                  disabled={busy || confirmation !== "DELETE"}
+                >
+                  {busy ? "Deleting…" : "Delete game"}
+                </button>
+              </div>
+            </form>
+          )}
         </Modal>
       )}
     </section>

@@ -46,6 +46,12 @@ game per existing game-service record, preserving all server IDs and relationshi
 and copying game presentation and favorites. Games are not automatically merged.
 Use **Move to game** on a server to group existing servers without losing history.
 
+To remove an empty game, open **Edit game → Delete game**, then type `DELETE` to
+confirm. Games containing server entries cannot be deleted; move or remove those
+entries first. Deletion removes the game and its favorites, records an audit event,
+and never sends deletion requests to Pterodactyl. Global catalog management and
+a recent sign-in are required.
+
 Existing Pterodactyl health checks are linked during the first browse/sync; existing
 published endpoints become explicit overrides to preserve connectivity. Where
 multiple old records reference the same panel server, only one receives the import
